@@ -1,0 +1,5 @@
+risk,symptom,tag,suggestion,source
+low,none,education,"Maintain healthy weight; track cycles; learn PCOS criteria.","2023 International PCOS Guideline"
+medium,oligo-ovulation,cycle,"Discuss cycle irregularity workup; consider androgen labs.","Rotterdam/2023 Guideline"
+high,hyperandrogenism,androgen,"Seek clinical evaluation for hyperandrogenism; rule out differentials.","2023 Guideline"
+high,metabolic,metabolic,"Screen for insulin resistance/lipids; lifestyle + clinician follow-up.","2023 Guideline"

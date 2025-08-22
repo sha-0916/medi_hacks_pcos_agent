@@ -1,168 +1,85 @@
+# src/train_baseline.py
 """
 PCOS Risk Analysis Demo
-Author: Shubhi Sharma (github.com/sha-0916)
-License: MIT
-
-Description:
-    Train a quick baseline (logistic regression) classifier on the Kaggle PCOS dataset.
-    Cleans columns, merges infertility file's II beta-HCG column, and prints metrics.
-    Also generates exploratory plots.
-
-Credits:
-    - Dataset: "Polycystic Ovary Syndrome (PCOS)" by Prasoon Kottarathil, Kaggle.
-    - Diagnostic criteria references: Rotterdam 2003; International PCOS Guideline 2023.
+Author: Shubhi Sharma (github.com/sha-0916) | MIT
 """
+import warnings; warnings.filterwarnings("ignore", category=FutureWarning)
 
-import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
-
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
+import numpy as np, pandas as pd
+from pathlib import Path
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import (
-    confusion_matrix as sk_confusion_matrix,
-    classification_report,
-    accuracy_score,
-)
 from sklearn.preprocessing import StandardScaler
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, brier_score_loss, roc_auc_score
+import joblib
 
+DATA_DIR = Path(__file__).resolve().parents[1] / "data"
+MODEL_DIR = Path(__file__).resolve().parents[1] / "models"
+MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-# -----------------------------
-# Utility functions
-# -----------------------------
-def _maybe_drop(df: pd.DataFrame, col: str) -> None:
-    """Drop a column if it exists (inplace)."""
-    if col in df.columns:
-        df.drop(columns=[col], inplace=True)
+def _maybe_drop(df, col):
+    if col in df.columns: df.drop(columns=[col], inplace=True)
 
+def load_data():
+    xlsx = DATA_DIR / "PCOS_data_without_infertility.xlsx"
+    csv  = DATA_DIR / "PCOS_infertility.csv"
+    df_x = pd.read_excel(xlsx, sheet_name="Full_new")
+    df_c = pd.read_csv(csv)
 
-def load_data(xlsx_path: str, csv_path: str, sheet_name: str = "Full_new") -> pd.DataFrame:
-    """Load and minimally clean/merge the two PCOS files."""
-    pcos_data = pd.read_excel(xlsx_path, sheet_name=sheet_name)
-    pcos_inf = pd.read_csv(csv_path)
+    df_x.rename(columns=lambda s: s.strip() if isinstance(s,str) else s, inplace=True)
+    df_c.rename(columns=lambda s: s.strip() if isinstance(s,str) else s, inplace=True)
+    _maybe_drop(df_x, "Unnamed: 44")
 
-    # Clean column names
-    pcos_data.rename(columns=lambda x: x.strip() if isinstance(x, str) else x, inplace=True)
-    pcos_inf.rename(columns=lambda x: x.strip() if isinstance(x, str) else x, inplace=True)
+    for c in ["Marraige Status (Yrs)", "Fast food (Y/N)"]:
+        if c in df_x.columns: df_x[c].fillna(df_x[c].median(), inplace=True)
 
-    # Drop empty Excel artifact column
-    _maybe_drop(pcos_data, "Unnamed: 44")
+    if "AMH(ng/mL)" in df_x.columns:
+        df_x["AMH(ng/mL)"] = pd.to_numeric(df_x["AMH(ng/mL)"], errors="coerce")
+        df_x["AMH(ng/mL)"].fillna(df_x["AMH(ng/mL)"].median(), inplace=True)
 
-    # Fill some missing values
-    for col in ["Marraige Status (Yrs)", "Fast food (Y/N)"]:
-        if col in pcos_data.columns:
-            pcos_data[col].fillna(pcos_data[col].median(), inplace=True)
-
-    # Convert AMH to numeric and fill missing
-    if "AMH(ng/mL)" in pcos_data.columns:
-        pcos_data["AMH(ng/mL)"] = pd.to_numeric(pcos_data["AMH(ng/mL)"], errors="coerce")
-        pcos_data["AMH(ng/mL)"].fillna(pcos_data["AMH(ng/mL)"].median(), inplace=True)
-
-    # Remove duplicate beta-HCG column and add from infertility file
-    _maybe_drop(pcos_data, "II    beta-HCG(mIU/mL)")
-    if "II    beta-HCG(mIU/mL)" in pcos_inf.columns:
-        pcos_data = pd.concat(
-            [pcos_data.reset_index(drop=True), pcos_inf[["II    beta-HCG(mIU/mL)"]].reset_index(drop=True)],
-            axis=1,
-        )
-
-    return pcos_data
-
+    _maybe_drop(df_x, "II    beta-HCG(mIU/mL)")
+    if "II    beta-HCG(mIU/mL)" in df_c.columns:
+        df_x = pd.concat([df_x.reset_index(drop=True),
+                          df_c[["II    beta-HCG(mIU/mL)"]].reset_index(drop=True)], axis=1)
+    return df_x
 
 def prepare_xy(df: pd.DataFrame):
-    """Split dataset into features and target."""
-    y = df["PCOS (Y/N)"].copy()
-    drop_cols = [c for c in ["PCOS (Y/N)", "Sl. No", "Patient File No."] if c in df.columns]
-    X = df.drop(columns=drop_cols).copy()
-    X = X.select_dtypes(include=[np.number])
+    y = df["PCOS (Y/N)"].astype(int)
+    X = df.drop(columns=[c for c in ["PCOS (Y/N)", "Sl. No", "Patient File No."] if c in df.columns])
+    X = X.select_dtypes(include=[np.number]).copy()
     X = X.fillna(X.median(numeric_only=True))
     return X, y
 
+def main():
+    df = load_data()
+    X, y = prepare_xy(df)
 
-def train_and_eval(X: pd.DataFrame, y: pd.Series, test_size=0.2, random_state=42):
-    """Train logistic regression and evaluate with metrics and plots."""
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=test_size, random_state=random_state, stratify=y
-    )
+    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
 
     scaler = StandardScaler()
-    X_train_s = scaler.fit_transform(X_train)
-    X_test_s = scaler.transform(X_test)
+    Xtr_s, Xte_s = scaler.fit_transform(Xtr), scaler.transform(Xte)
 
-    model = LogisticRegression(max_iter=200)
-    model.fit(X_train_s, y_train)
+    base = LogisticRegression(max_iter=500)
+    model = CalibratedClassifierCV(estimator=base, method="isotonic", cv=5)
+    model.fit(Xtr_s, ytr)
 
-    train_acc = accuracy_score(y_train, model.predict(X_train_s))
-    test_acc = accuracy_score(y_test, model.predict(X_test_s))
+    yhat = model.predict(Xte_s)
+    p1   = model.predict_proba(Xte_s)[:,1]
 
-    print(f"\n=== Baseline Logistic Regression ===")
-    print(f"Train accuracy: {train_acc:.3f}")
-    print(f"Test  accuracy: {test_acc:.3f}")
+    print("\n=== Metrics ===")
+    print("Accuracy:", round(accuracy_score(yte, yhat), 3))
+    print("ROC AUC :", round(roc_auc_score(yte, p1), 3))
+    print("Brier   :", round(brier_score_loss(yte, p1), 4))
+    print("\nConfusion matrix:\n", confusion_matrix(yte, yhat))
+    print("\nClassification report:\n", classification_report(yte, yhat, digits=3))
 
-    y_pred = model.predict(X_test_s)
-    cm = sk_confusion_matrix(y_test, y_pred)
-    print("\nConfusion matrix (rows=true, cols=pred):")
-    print(cm)
-
-    print("\nClassification report:")
-    print(classification_report(y_test, y_pred, digits=3))
-
-    # --- Plot Confusion Matrix ---
-    plt.figure(figsize=(5, 4))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
-                xticklabels=["No PCOS", "PCOS"], yticklabels=["No PCOS", "PCOS"])
-    plt.xlabel("Predicted")
-    plt.ylabel("True")
-    plt.title("Confusion Matrix")
-    plt.tight_layout()
-    plt.show()
-
-    return model, scaler
-
-
-def plot_exploratory(df: pd.DataFrame):
-    """Quick exploratory plots for class balance and BMI distribution."""
-    if "PCOS (Y/N)" in df.columns:
-        plt.figure(figsize=(6, 4))
-        sns.countplot(x="PCOS (Y/N)", data=df)
-        plt.title("Class Balance (PCOS vs Non-PCOS)")
-        plt.tight_layout()
-        plt.show()
-
-    if "BMI" in df.columns:
-        plt.figure(figsize=(6, 4))
-        sns.histplot(df, x="BMI", hue="PCOS (Y/N)", bins=20, kde=True, palette="Set2")
-        plt.title("BMI distribution by PCOS status")
-        plt.tight_layout()
-        plt.show()
-
-
-# -----------------------------
-# Main
-# -----------------------------
-def main():
-    # Hardcoded file names — keep them in the same folder as this script
-    xlsx_path = "PCOS_data_without_infertility.xlsx"
-    csv_path = "PCOS_infertility.csv"
-    sheet_name = "Full_new"
-
-    print("Loading data...")
-    df = load_data(xlsx_path, csv_path, sheet_name=sheet_name)
-    print(f"Loaded shape: {df.shape}")
-
-    # Exploratory plots
-    plot_exploratory(df)
-
-    print("Preparing features/labels...")
-    X, y = prepare_xy(df)
-    print(f"Features: {X.shape[1]}  |  Samples: {X.shape[0]}")
-
-    _ = train_and_eval(X, y)
-
+    # save artifacts
+    joblib.dump(model,   MODEL_DIR / "pcos_model.pkl")
+    joblib.dump(scaler,  MODEL_DIR / "scaler.pkl")
+    joblib.dump(list(X.columns), MODEL_DIR / "features.pkl")
+    print(f"\nSaved to {MODEL_DIR}")
 
 if __name__ == "__main__":
     main()
