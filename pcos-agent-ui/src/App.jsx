@@ -1,114 +1,140 @@
 import { useEffect, useMemo, useState } from "react";
 import { RadialBarChart, RadialBar, Legend } from "recharts";
-// Optional icons (if you installed lucide-react)
-// import { AlertTriangle, CheckCircle2, Loader2 } from "lucide-react";
 
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
-function cls(...xs) {
-  return xs.filter(Boolean).join(" ");
-}
-
-function RiskPill({ risk }) {
-  const map = {
-    low: { bg: "#ecfeff", color: "#155e75" },
-    medium: { bg: "#fef9c3", color: "#854d0e" },
-    high: { bg: "#fee2e2", color: "#7f1d1d" },
-  };
-  const s = map[risk] || map.low;
-  return (
-    <span style={{ background: s.bg, color: s.color, padding: "4px 10px", borderRadius: 999 }}>
-      {(risk || "low").toUpperCase()}
-    </span>
-  );
+function Pill({ risk }) {
+  const r = (risk || "low").toLowerCase();
+  return <span className={`pill ${r}`}>{r.toUpperCase()}</span>;
 }
 
 function Gauge({ prob }) {
   const pct = Math.round((prob || 0) * 100);
   const data = [{ name: "PCOS", value: pct }];
   return (
-    <div style={{ width: 220, height: 180 }}>
+    <div style={{ width: 240, height: 190 }}>
       <RadialBarChart
-        width={220}
-        height={180}
+        width={240}
+        height={190}
         innerRadius="60%"
         outerRadius="100%"
         data={data}
         startAngle={180}
         endAngle={-180}
       >
-        <RadialBar minAngle={15} clockWise dataKey="value" />
-        <Legend
-          iconSize={10}
-          layout="vertical"
-          verticalAlign="middle"
-          wrapperStyle={{ top: "30%", left: "60%" }}
-        />
+        <RadialBar minAngle={8} clockWise dataKey="value" />
+        <Legend layout="vertical" verticalAlign="middle" wrapperStyle={{ top: "30%", left: "60%" }} />
       </RadialBarChart>
       <div style={{ textAlign: "center", marginTop: -20 }}>
         <div style={{ fontSize: 22, fontWeight: 700 }}>{pct}%</div>
-        <div style={{ fontSize: 12, color: "#6b7280" }}>probability</div>
+        <div className="muted">probability</div>
       </div>
     </div>
   );
 }
 
+const CORE_FIELDS = [
+  "Age (yrs)",
+  "BMI",
+  "Cycle length(days)",
+  "AMH(ng/mL)",
+  "Cycle(R/I)",
+  "Pregnant(Y/N)",
+  "LH(mIU/mL)",
+  "FSH(mIU/mL)",
+  "FSH/LH",
+  "Follicle No. (L)",
+  "Follicle No. (R)",
+  "hair growth(Y/N)",
+  "Pimples(Y/N)",
+  "Skin darkening (Y/N)"
+];
+
+const PRESETS = {
+  low: {
+    "BMI": 22, "Age (yrs)": 24, "Cycle length(days)": 29, "AMH(ng/mL)": 3.0,
+    "Cycle(R/I)": "R", "Pregnant(Y/N)": "N", "hair growth(Y/N)": "N", "Pimples(Y/N)": "N",
+    "Reg.Exercise(Y/N)": "Y", "Fast food (Y/N)": "N"
+  },
+  borderline: {
+    "BMI": 26, "Age (yrs)": 28, "Cycle length(days)": 35, "AMH(ng/mL)": 4.5,
+    "Cycle(R/I)": "I", "Pregnant(Y/N)": "N", "hair growth(Y/N)": "N", "Pimples(Y/N)": "Y",
+    "Reg.Exercise(Y/N)": "Y", "Fast food (Y/N)": "N"
+  },
+  pcos_like: {
+    "Age (yrs)": 23, "BMI": 32, "Cycle length(days)": 50, "AMH(ng/mL)": 7.5,
+    "Cycle(R/I)": "I", "Pregnant(Y/N)": "N", "hair growth(Y/N)": "Y", "Pimples(Y/N)": "Y",
+    "Skin darkening (Y/N)": "Y", "Reg.Exercise(Y/N)": "N", "Fast food (Y/N)": "Y",
+    "Follicle No. (L)": 15, "Follicle No. (R)": 16, "LH(mIU/mL)": 12, "FSH(mIU/mL)": 5, "FSH/LH": 0.42
+  }
+};
+
+function useLocalStorage(key, initial) {
+  const [state, setState] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(key) || "null") ?? initial; }
+    catch { return initial; }
+  });
+  useEffect(() => { localStorage.setItem(key, JSON.stringify(state)); }, [key, state]);
+  return [state, setState];
+}
+
 export default function App() {
   const [features, setFeatures] = useState([]);
   const [template, setTemplate] = useState({});
-  const [values, setValues] = useState({});
+  const [values, setValues] = useLocalStorage("pcos.values", {});
   const [filter, setFilter] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const [result, setResult] = useState(null); // {risk, prob_pcos, counseling, evidence_used, next_questions?}
-  const [answers, setAnswers] = useState([]); // [{question_id, answer}]
+  const [result, setResult] = useState(null);
+  const [answers, setAnswers] = useState([]);
+  const [profileName, setProfileName] = useState("");
+  const [savedProfiles, setSavedProfiles] = useLocalStorage("pcos.profiles", {}); // name -> values
 
   // load features once
   useEffect(() => {
     (async () => {
-      const r = await fetch(`${API_BASE}/features`);
-      const j = await r.json();
-      setFeatures(j.features || []);
-      // optional template support if you implemented it on Flask; else fall back to zeros
-      const tmpl = j.template || Object.fromEntries((j.features || []).map((f) => [f, 0]));
-      setTemplate(tmpl);
-      setValues(tmpl);
+      try {
+        const r = await fetch(`${API_BASE}/features`);
+        const j = await r.json();
+        setFeatures(j.features || []);
+        const tmpl = j.template || Object.fromEntries((j.features || []).map((f) => [f, 0]));
+        setTemplate(tmpl);
+        if (!Object.keys(values || {}).length) setValues(tmpl);
+      } catch (e) {
+        console.error("Failed to load features", e);
+        alert("Could not load /features. Is Flask running on 127.0.0.1:8000?");
+      }
     })();
   }, []);
 
-  const filteredFeatures = useMemo(() => {
+  const filteredCore = useMemo(() => CORE_FIELDS.filter(f => features.includes(f)), [features]);
+  const filteredAll = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return features;
-    return features.filter((f) => f.toLowerCase().includes(q));
-  }, [filter, features]);
+    const rest = features.filter(f => !filteredCore.includes(f));
+    return q ? rest.filter(f => f.toLowerCase().includes(q)) : rest;
+  }, [filter, features, filteredCore]);
 
-  function setVal(field, v) {
-    setValues((old) => ({ ...old, [field]: v }));
-  }
+  function setVal(field, v) { setValues(prev => ({ ...prev, [field]: v })); }
 
   function parsePayload() {
-    // Leave strings as-is for Y/N & R/I (server normalizes)
-    // Try to parse numerics; keep empty strings out of payload
     const data = {};
     for (const k of features) {
       const raw = values[k];
       if (raw === "" || raw === undefined || raw === null) continue;
-      // if looks like a number, parse as number
       const num = Number(raw);
       data[k] = Number.isFinite(num) && raw !== true && raw !== false ? num : raw;
     }
     return { data };
   }
 
-  async function getCounselInteractive(reset = true) {
+  async function predictCounselInteractive(reset=true) {
     setLoading(true);
     try {
       const body = parsePayload();
       const payload = reset ? body : { ...body, answered: answers };
       const r = await fetch(`${API_BASE}/counsel-interactive`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       });
       const j = await r.json();
       setResult(j);
@@ -116,9 +142,7 @@ export default function App() {
     } catch (e) {
       console.error(e);
       alert("Request failed. Check console.");
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   }
 
   async function answerFollowup(ans) {
@@ -126,23 +150,7 @@ export default function App() {
     const q = result.next_questions[0];
     const newAnswers = [...answers, { question_id: q.question_id, answer: ans }];
     setAnswers(newAnswers);
-
-    setLoading(true);
-    try {
-      const body = parsePayload();
-      const r = await fetch(`${API_BASE}/counsel-interactive`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...body, answered: newAnswers }),
-      });
-      const j = await r.json();
-      setResult(j);
-    } catch (e) {
-      console.error(e);
-      alert("Request failed. Check console.");
-    } finally {
-      setLoading(false);
-    }
+    await predictCounselInteractive(false);
   }
 
   function resetAll() {
@@ -152,160 +160,173 @@ export default function App() {
     setAnswers([]);
   }
 
-  return (
-    <div style={{ padding: 24, maxWidth: 1200, margin: "0 auto", fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, Arial" }}>
-      {/* Header */}
-      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 16 }}>
-        <h1 style={{ margin: 0 }}>PCOS Assistant</h1>
-        <div style={{ color: "#6b7280", fontSize: 12 }}>Screening demo — not a diagnosis.</div>
-      </header>
+  function loadPreset(name) {
+    const preset = PRESETS[name] || {};
+    const merged = { ...template, ...values, ...preset };
+    setValues(merged);
+  }
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16 }}>
-        {/* Left: form */}
-        <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 12 }}>
-            <input
-              placeholder="Search features…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
-            />
-            <button onClick={resetAll} style={{ padding: "8px 12px", borderRadius: 8, border: 0 }}>
-              Reset
-            </button>
+  function saveProfile() {
+    if (!profileName.trim()) { alert("Enter a profile name."); return; }
+    const next = { ...savedProfiles, [profileName.trim()]: values };
+    setSavedProfiles(next);
+    setProfileName("");
+  }
+
+  function loadProfile(name) {
+    const v = savedProfiles[name];
+    if (!v) return;
+    setValues({ ...template, ...v });
+  }
+
+  function deleteProfile(name) {
+    const next = { ...savedProfiles };
+    delete next[name];
+    setSavedProfiles(next);
+  }
+
+  function printCounseling() { window.print(); }
+
+  return (
+    <div className="container">
+      <div className="header">
+        <h1 style={{ margin: 0 }}>PCOS Assistant</h1>
+        <div className="muted">Screening demo — not a diagnosis. © {new Date().getFullYear()} Shubhi Sharma</div>
+      </div>
+
+      <div className="row">
+        {/* LEFT: Input Form */}
+        <section className="card">
+          {/* Presets / Profiles */}
+          <div className="actions" style={{ marginBottom: 10 }}>
+            <span className="badge">Presets:</span>
+            <button className="btn secondary" onClick={() => loadPreset("low")}>Low</button>
+            <button className="btn secondary" onClick={() => loadPreset("borderline")}>Borderline</button>
+            <button className="btn secondary" onClick={() => loadPreset("pcos_like")}>PCOS-like</button>
+            <span style={{ flex: 1 }} />
+            <span className="badge">Profiles:</span>
+            <input className="input" placeholder="Profile name…" style={{ width: 180 }}
+                   value={profileName} onChange={e=>setProfileName(e.target.value)} />
+            <button className="btn secondary" onClick={saveProfile}>Save</button>
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))",
-              gap: 12,
-              maxHeight: 480,
-              overflow: "auto",
-              paddingRight: 6,
-            }}
-          >
-            {filteredFeatures.map((f) => (
-              <div key={f} style={{ display: "grid", gap: 6 }}>
-                <label style={{ fontSize: 12, color: "#374151" }}>{f}</label>
-                <input
-                  value={values[f] ?? ""}
-                  onChange={(e) => setVal(f, e.target.value)}
-                  placeholder='e.g. 28 or "Y"/"N" or "R"/"I"'
-                  style={{ padding: "8px 10px", borderRadius: 8, border: "1px solid #d1d5db" }}
-                />
+          {Object.keys(savedProfiles).length ? (
+            <div className="actions" style={{ marginBottom: 10 }}>
+              {Object.keys(savedProfiles).map(name => (
+                <span key={name} className="badge" style={{ display:"inline-flex", alignItems:"center", gap:8 }}>
+                  {name}
+                  <button className="btn secondary" onClick={() => loadProfile(name)}>Load</button>
+                  <button className="btn secondary" onClick={() => deleteProfile(name)}>×</button>
+                </span>
+              ))}
+            </div>
+          ) : null}
+
+          {/* Core fields */}
+          <h3 style={{ marginTop: 6 }}>Core inputs</h3>
+          <div className="grid">
+            {filteredCore.map((f) => (
+              <div key={f}>
+                <label className="label">{f}</label>
+                <input className="input" value={values[f] ?? ""} onChange={e=>setVal(f, e.target.value)}
+                  placeholder='e.g. 28 or "Y"/"N" or "R"/"I"' />
               </div>
             ))}
           </div>
 
-          <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
-            <button
-              onClick={() => getCounselInteractive(true)}
-              disabled={loading}
-              style={{ padding: "10px 14px", borderRadius: 10, border: 0, background: "#111827", color: "white" }}
-            >
+          <hr className="sep" />
+
+          {/* More fields */}
+          <div className="kv" style={{ marginBottom: 10 }}>
+            <h3 style={{ margin: 0 }}>More inputs</h3>
+            <input className="input" style={{ marginLeft: "auto", width: 260 }} placeholder="Search features…"
+                   value={filter} onChange={e=>setFilter(e.target.value)} />
+          </div>
+          <div className="grid">
+            {filteredAll.map((f) => (
+              <div key={f}>
+                <label className="label">{f}</label>
+                <input className="input" value={values[f] ?? ""} onChange={e=>setVal(f, e.target.value)}
+                  placeholder="value" />
+              </div>
+            ))}
+          </div>
+
+          <div className="actions" style={{ marginTop: 14 }}>
+            <button className="btn" disabled={loading} onClick={() => predictCounselInteractive(true)}>
               {loading ? "Thinking…" : "Get Counseling"}
             </button>
-            <button
-              onClick={() => getCounselInteractive(false)}
-              disabled={loading || !answers.length}
-              style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #d1d5db", background: "white" }}
-              title={answers.length ? "" : "Answer a follow-up first"}
-            >
-              Update With Answers
+            <button className="btn secondary" disabled={loading || !answers.length} onClick={() => predictCounselInteractive(false)}>
+              Update with Answers
             </button>
+            <button className="btn secondary" onClick={resetAll}>Reset</button>
           </div>
         </section>
 
-        {/* Right: result summary */}
-        <aside style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
+        {/* RIGHT: Summary */}
+        <aside className="card">
           <h3 style={{ marginTop: 0 }}>Result</h3>
           {result ? (
             <>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <RiskPill risk={result.risk} />
-                <div style={{ color: "#6b7280", fontSize: 12 }}>
-                  Probability: {(result.prob_pcos * 100).toFixed(1)}%
-                </div>
+              <div className="kv">
+                <Pill risk={result.risk} />
+                <span className="muted">Probability: {(result.prob_pcos * 100).toFixed(1)}%</span>
               </div>
-              <div style={{ marginTop: 8 }}>
-                <Gauge prob={result.prob_pcos} />
+              <div style={{ marginTop: 8 }}><Gauge prob={result.prob_pcos} /></div>
+              <div className="actions" style={{ marginTop: 8 }}>
+                <button className="btn secondary" onClick={printCounseling}>Print counseling</button>
               </div>
             </>
           ) : (
-            <div style={{ color: "#6b7280" }}>No result yet.</div>
+            <div className="muted">No result yet.</div>
           )}
         </aside>
       </div>
 
-      {/* Counseling & evidence */}
+      {/* Counseling + Evidence */}
       {result && (
-        <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginTop: 16 }}>
-          <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
+        <div className="row" style={{ marginTop: 16 }}>
+          <section className="card">
             <h3 style={{ marginTop: 0 }}>Counseling</h3>
             <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.5 }}>
               {result.counseling ||
                 "(LLM unavailable) Screening result only. Please review with a clinician. If severe pain, rapid virilization, or pregnancy with acute symptoms, seek urgent care. (Guideline 2023)"}
             </p>
           </section>
-
-          <section style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16 }}>
+          <section className="card">
             <h3 style={{ marginTop: 0 }}>Evidence used</h3>
-            <ul style={{ paddingLeft: 18 }}>
+            <ul style={{ paddingLeft: 18, margin: 0 }}>
               {(result.evidence_used || []).map((it, i) => (
                 <li key={i} style={{ marginBottom: 6 }}>
                   {it.suggestion ? it.suggestion : JSON.stringify(it)}
-                  {it.source ? <span style={{ color: "#6b7280" }}> ({it.source})</span> : null}
+                  {it.source ? <span className="muted"> ({it.source})</span> : null}
                 </li>
               ))}
               {(!result.evidence_used || !result.evidence_used.length) && (
-                <li style={{ color: "#6b7280" }}>No evidence items returned.</li>
+                <li className="muted">No evidence items returned.</li>
               )}
             </ul>
           </section>
         </div>
       )}
 
-      {/* Follow-up question modal */}
+      {/* Follow-up modal */}
       {result?.next_questions?.length ? (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,.4)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 16,
-          }}
-        >
-          <div style={{ background: "white", color: "black", width: 520, maxWidth: "95vw", borderRadius: 12, padding: 18 }}>
-            <div style={{ fontSize: 14, color: "#6b7280" }}>Follow-up</div>
+        <div className="modal-backdrop">
+          <div className="modal">
+            <div className="muted">Follow-up</div>
             <h3 style={{ marginTop: 6 }}>{result.next_questions[0].question_text}</h3>
-            <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
-              <button
-                onClick={() => answerFollowup("yes")}
-                disabled={loading}
-                style={{ padding: "10px 14px", borderRadius: 10, border: 0, background: "#111827", color: "white" }}
-              >
-                Yes
-              </button>
-              <button
-                onClick={() => answerFollowup("no")}
-                disabled={loading}
-                style={{ padding: "10px 14px", borderRadius: 10, border: "1px solid #d1d5db", background: "white" }}
-              >
-                No
-              </button>
+            <div className="actions" style={{ marginTop: 12 }}>
+              <button className="btn" disabled={loading} onClick={() => answerFollowup("yes")}>Yes</button>
+              <button className="btn secondary" disabled={loading} onClick={() => answerFollowup("no")}>No</button>
             </div>
           </div>
         </div>
       ) : null}
 
-      {/* Footer */}
-      <footer style={{ marginTop: 20, color: "#6b7280", fontSize: 12 }}>
-        © {new Date().getFullYear()} Shubhi Sharma · MIT License · Screening tool only (not a diagnosis).
-      </footer>
+      <div className="footer">
+        MIT License · Data credits in README · Screening tool only (not a diagnosis).
+      </div>
     </div>
   );
 }
