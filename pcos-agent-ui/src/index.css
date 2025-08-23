@@ -114,10 +114,6 @@ body {
   width: 36px; height: 36px; border-radius: 50%; display:grid; place-items:center;
   background: #f1f5f9; border: 1px solid var(--border);
 }
-.nurse {
-  width: 30px; height: 30px;
-}
+.nurse { width: 30px; height: 30px; }
 
-.chat-input {
-  display:flex; gap:10px; align-items: center;
-}
+.chat-input { display:flex; gap:10px; align-items: center; }

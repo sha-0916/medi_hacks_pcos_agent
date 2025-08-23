@@ -73,14 +73,12 @@ function ChatPane() {
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     setThinking(true);
 
-    // Try backend /chat. If missing or slow, return a friendly fallback quickly.
     try {
       const r = await fetch(`${API_BASE}/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
-          // simple chat history; backend may ignore if it wants
           history: messages.map(({ role, text }) => ({ role, text })),
         }),
         signal: AbortSignal.timeout(60000),
@@ -93,9 +91,7 @@ function ChatPane() {
       setMessages((m) => [...m, {
         role: "assistant",
         text:
-          "I’m here to help with PCOS education and next steps. " +
-          "Ask about symptoms, testing, lifestyle measures, or guidelines. " +
-          "(Chat backend not available; showing a safe fallback.)"
+          "I'm here to assist with PCOS-related questions, lab interpretation context, risk factors, and next-step options."
       }]);
     } finally {
       setThinking(false);
@@ -133,7 +129,7 @@ function ChatPane() {
         <div className="chat-input">
           <input
             className="input"
-            placeholder="Type a message… (e.g., What do irregular cycles mean?)"
+            placeholder="Type a message… (e.g., Suggest workup for oligomenorrhea)"
             value={text}
             onChange={(e) => setText(e.target.value)}
             onKeyDown={onKey}
@@ -263,8 +259,7 @@ function DetailsPane() {
           <div className="card">
             <h3 className="section-title">Counseling</h3>
             <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-              {result.counseling ||
-                "(LLM unavailable) Screening result only. Please review with a clinician. If severe pain, rapid virilization, or pregnancy with acute symptoms, seek urgent care. (Guideline 2023)"}
+              {result.counseling || "(LLM unavailable at the moment.)"}
             </p>
           </div>
           <div className="card">
@@ -341,12 +336,13 @@ export default function App() {
           <ChatPane />
           <div className="card">
             <h3 className="section-title">About</h3>
-            <p className="brand-sub" style={{ fontStyle: "italic" }}>
-              Educational assistant. Not a diagnosis. If you have severe pain, fainting,
-              pregnancy complications, or rapidly worsening symptoms, seek urgent care.
+            <p style={{ color: "var(--muted)" }}>
+              Built for clinicians, interns, and patients to explore PCOS-related questions.
+              The assistant can incorporate lab parameters (e.g., hCG, AMH, LH/FSH) and
+              patient factors for risk analysis and tailored guidance.
             </p>
             <p style={{ color: "var(--muted)" }}>
-              Tip: Switch to <strong>Enter details</strong> to get a personalized risk estimate and guidance.
+              Use the <strong>Enter details</strong> tab to provide parameters and generate a result.
             </p>
           </div>
         </div>
@@ -355,7 +351,7 @@ export default function App() {
       )}
 
       <div className="brand-sub" style={{ textAlign: "center", marginTop: 18 }}>
-        © {new Date().getFullYear()} Shubhi Sharma · MIT · Data credits in README · Screening tool only.
+        © {new Date().getFullYear()} Shubhi Sharma · MIT · Data credits in README.
       </div>
     </div>
   );
