@@ -1,7 +1,6 @@
 from __future__ import annotations
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 import joblib
 import pandas as pd
@@ -20,13 +19,14 @@ from src.assistant import build_prompt, bullets, call_llm
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = ROOT / "data"
 MODEL_DIR = ROOT / "models"
-TOOLS_DIR = ROOT / "tools"  # will try to serve tools/tester.html at "/"
+TOOLS_DIR = ROOT / "tools"  # serve tools/tester.html at "/"
 
-MODEL  = joblib.load(MODEL_DIR / "pcos_model.pkl")
-SCALER = joblib.load(MODEL_DIR / "scaler.pkl")
-FEATS  = joblib.load(MODEL_DIR / "features.pkl")
+MODEL   = joblib.load(MODEL_DIR / "pcos_model.pkl")
+SCALER  = joblib.load(MODEL_DIR / "scaler.pkl")
+FEATS   = joblib.load(MODEL_DIR / "features.pkl")
+MEDIANS = joblib.load(MODEL_DIR / "medians.pkl")  # NEW: training-time medians
 
-DF_FUP = pd.read_csv(DATA_DIR / "followups.csv")  # for interactive lookup
+DF_FUP = pd.read_csv(DATA_DIR / "followups.csv")
 
 # -----------------------------
 # Flask app
@@ -35,7 +35,7 @@ app = Flask(__name__)
 CORS(app)
 
 # -----------------------------
-# Option B normalization
+# Normalization
 # -----------------------------
 YN_FIELDS = {
     "Pregnant(Y/N)", "Weight gain(Y/N)", "hair growth(Y/N)", "Skin darkening (Y/N)",
@@ -85,80 +85,79 @@ def risk_band(p: float) -> str:
 def home():
     tester = TOOLS_DIR / "tester.html"
     if tester.exists():
-        # Serve your nice tester UI if present
         return send_from_directory(TOOLS_DIR, "tester.html")
-    # Fallback minimal homepage
     return """
-    <!doctype html>
-    <html>
-      <head><meta charset="utf-8"/><title>PCOS Risk API</title>
-        <style>
-          body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:40px;max-width:800px}
-          a,button{display:inline-block;margin:6px 8px 6px 0;padding:10px 14px;border-radius:10px;background:#111827;color:#fff;text-decoration:none}
-          button{border:0;cursor:pointer}
-          .muted{color:#6b7280;font-size:12px}
-          pre{background:#f3f4f6;padding:12px;border-radius:10px;overflow:auto}
-        </style>
-      </head>
-      <body>
-        <h1>PCOS Risk API</h1>
-        <p class="muted">Screening demo — not a diagnosis.</p>
-        <div>
-          <a href="/health">GET /health</a>
-          <a href="/features">GET /features</a>
-        </div>
-        <h3>Quick test: /predict</h3>
-        <pre id="out">{ "click": "Run test" }</pre>
-        <button onclick="run()">POST /predict</button>
-        <script>
-          async function run(){
-            const r = await fetch("/predict",{
-              method:"POST",
-              headers:{ "Content-Type":"application/json" },
-              body: JSON.stringify({ data:{
-                "BMI":28, "Age (yrs)":25, "Cycle length(days)":40,
-                "AMH(ng/mL)":6.2, "Cycle(R/I)":"I", "Pregnant(Y/N)":"N"
-              }})
-            });
-            const j = await r.json().catch(async()=>({raw: await r.text()}));
-            document.getElementById("out").textContent = JSON.stringify(j,null,2);
-          }
-        </script>
-        <p class="muted">Tip: add <code>tools/tester.html</code> for a full tester UI.</p>
-      </body>
-    </html>
+    <!doctype html><html><head><meta charset="utf-8"/><title>PCOS Risk API</title>
+    <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:40px;max-width:800px}
+    a,button{display:inline-block;margin:6px 8px 6px 0;padding:10px 14px;border-radius:10px;background:#111827;color:#fff;text-decoration:none}
+    button{border:0;cursor:pointer}.muted{color:#6b7280;font-size:12px}pre{background:#f3f4f6;padding:12px;border-radius:10px;overflow:auto}</style>
+    </head><body>
+      <h1>PCOS Risk API</h1>
+      <p class="muted">Screening demo — not a diagnosis.</p>
+      <div><a href="/health">GET /health</a> <a href="/features">GET /features</a></div>
+      <h3>Quick test: /predict</h3><pre id="out">{ "click": "Run test" }</pre>
+      <button onclick="run()">POST /predict</button>
+      <script>
+        async function run(){
+          const r = await fetch("/predict",{method:"POST",headers:{ "Content-Type":"application/json" },
+            body: JSON.stringify({ data:{
+              "BMI":28, "Age (yrs)":25, "Cycle length(days)":40,
+              "AMH(ng/mL)":6.2, "Cycle(R/I)":"I", "Pregnant(Y/N)":"N"
+            }})});
+          const j = await r.json().catch(async()=>({raw: await r.text()}));
+          document.getElementById("out").textContent = JSON.stringify(j,null,2);
+        }
+      </script>
+      <p class="muted">Tip: add tools/tester.html for a full tester UI.</p>
+    </body></html>
     """
 
 # -----------------------------
-# Core routes
+# Core helpers
+# -----------------------------
+def _make_feature_frame(payload: Dict[str, Any]) -> pd.DataFrame:
+    """Normalize, align to FEATS, cast to float, fill NaNs, scale."""
+    data = normalize_features(payload.get("data", {}))
+    df = pd.DataFrame([data])
+
+    # ensure all FEATS exist → use training medians (NOT zeros)
+    for c in FEATS:
+        if c not in df.columns:
+            df[c] = MEDIANS.get(c, 0.0)
+
+    # align order
+    df = df[FEATS]
+
+    # cast & fill any remaining NaNs
+    df = df.astype(float)
+    df = df.fillna(df.median(numeric_only=True))
+
+    return df
+
+# -----------------------------
+# Routes
 # -----------------------------
 @app.get("/health")
 def health():
-    ok = all([MODEL is not None, SCALER is not None, FEATS is not None])
+    ok = all([MODEL is not None, SCALER is not None, FEATS is not None, MEDIANS is not None])
     return jsonify({"ok": ok, "num_features": len(FEATS) if FEATS else 0})
 
 @app.get("/features")
 def features():
-    return jsonify({"features": FEATS})
+    # optional: include a template with medians so UIs can prefill
+    tmpl = {name: float(MEDIANS.get(name, 0.0)) for name in FEATS}
+    return jsonify({"features": FEATS, "template": tmpl})
 
 @app.post("/predict")
 def predict():
     try:
         payload = request.get_json(force=True) or {}
-        data = normalize_features(payload.get("data", {}))
-        df = pd.DataFrame([data])
-        # ensure all FEATS
-        for c in FEATS:
-            if c not in df.columns:
-                df[c] = 0
-        try:
-            df = df[FEATS].astype(float)
-        except Exception as e:
-            return jsonify({"error": "Non-numeric value in features", "detail": str(e)}), 400
-        df = df.fillna(df.median(numeric_only=True))
+        df = _make_feature_frame(payload)
         Xs = SCALER.transform(df)
         p1 = float(MODEL.predict_proba(Xs)[:, 1][0])
-        return jsonify({"pred": int(p1 >= 0.5), "prob_pcos": p1, "risk": risk_band(p1)})
+        out = {"pred": int(p1 >= 0.5), "prob_pcos": p1, "risk": risk_band(p1)}
+        print(f"[predict] prob={p1:.3f} risk={out['risk']}")
+        return jsonify(out)
     except Exception as e:
         return jsonify({"error": "/predict failed", "detail": repr(e)}), 500
 
@@ -179,28 +178,18 @@ def suggest():
 def counsel():
     try:
         payload = request.get_json(force=True) or {}
-        data = normalize_features(payload.get("data", {}))
-        symptoms = payload.get("symptoms") or []
-
-        df = pd.DataFrame([data])
-        for c in FEATS:
-            if c not in df.columns:
-                df[c] = 0
-        try:
-            df = df[FEATS].astype(float)
-        except Exception as e:
-            return jsonify({"error": "Non-numeric value in features", "detail": str(e)}), 400
-
-        df = df.fillna(df.median(numeric_only=True))
+        df = _make_feature_frame(payload)
         Xs = SCALER.transform(df)
         p1 = float(MODEL.predict_proba(Xs)[:, 1][0])
         band = risk_band(p1)
 
-        items = retrieve_guidance(risk=band, symptoms=symptoms, k=5)
-        prompt = build_prompt(risk=band, prob_pcos=p1, symptoms=symptoms, evidence_text=bullets(items))
+        items = retrieve_guidance(risk=band, symptoms=payload.get("symptoms") or [], k=5)
+        prompt = build_prompt(risk=band, prob_pcos=p1, symptoms=payload.get("symptoms") or [], evidence_text=bullets(items))
         text = call_llm(prompt)
 
-        return jsonify({"risk": band, "prob_pcos": p1, "counseling": text, "evidence_used": items})
+        out = {"risk": band, "prob_pcos": p1, "counseling": text, "evidence_used": items}
+        print(f"[counsel] prob={p1:.3f} risk={band}")
+        return jsonify(out)
     except Exception as e:
         return jsonify({"error": "/counsel failed", "detail": repr(e)}), 500
 
@@ -221,29 +210,20 @@ def next_question():
 def counsel_interactive():
     try:
         payload = request.get_json(force=True) or {}
-        data = normalize_features(payload.get("data", {}))
         answered = payload.get("answered") or []
 
-        df = pd.DataFrame([data])
-        for c in FEATS:
-            if c not in df.columns:
-                df[c] = 0
-        try:
-            df = df[FEATS].astype(float)
-        except Exception as e:
-            return jsonify({"error": "Non-numeric value in features", "detail": str(e)}), 400
-
-        df = df.fillna(df.median(numeric_only=True))
+        df = _make_feature_frame(payload)
         Xs = SCALER.transform(df)
         p1 = float(MODEL.predict_proba(Xs)[:, 1][0])
         band = risk_band(p1)
 
-        # First question if medium/high and nothing answered yet
+        # first question if medium/high and nothing answered
         if band in {"medium", "high"} and not answered:
             qs = next_questions(risk=band, asked_ids=[], k=1)
+            print(f"[counsel-interactive] prob={p1:.3f} risk={band} → asking first follow-up")
             return jsonify({"risk": band, "prob_pcos": p1, "next_questions": qs, "evidence_used": []})
 
-        # Apply answers → tags + extras
+        # apply answers → tags + extras
         tags: List[str] = []
         extras: List[Dict[str, Any]] = []
         pool = DF_FUP[DF_FUP["risk"].str.lower() == band.lower()]
@@ -263,6 +243,7 @@ def counsel_interactive():
         asked_ids = [a.get("question_id") for a in answered]
         nxt = next_questions(risk=band, asked_ids=asked_ids, k=1)
 
+        print(f"[counsel-interactive] prob={p1:.3f} risk={band} answered={len(answered)} next_q={len(nxt)}")
         return jsonify({
             "risk": band,
             "prob_pcos": p1,
@@ -272,6 +253,54 @@ def counsel_interactive():
         })
     except Exception as e:
         return jsonify({"error": "/counsel-interactive failed", "detail": repr(e)}), 500
+
+# -----------------------------
+# Debug route (vector inspection)
+# -----------------------------
+@app.post("/debug/vector")
+def debug_vector():
+    try:
+        payload = request.get_json(force=True) or {}
+        data = payload.get("data", {})
+        df = pd.DataFrame([normalize_features(data)])
+
+        # ensure features with training medians
+        for c in FEATS:
+            if c not in df.columns:
+                df[c] = MEDIANS.get(c, 0.0)
+        df = df[FEATS]
+
+        pre_cast = {
+            "nonzero": int((df != 0).sum(axis=1).iloc[0]),
+            "num_na": int(df.isna().sum(axis=1).iloc[0]),
+        }
+
+        try:
+            df_num = df.astype(float)
+        except Exception as e:
+            return jsonify({"error": f"astype(float) failed: {e}", "vector_preview": df.iloc[0].to_dict()}), 400
+        df_num = df_num.fillna(df_num.median(numeric_only=True))
+
+        Xs = SCALER.transform(df_num)
+        p1 = float(MODEL.predict_proba(Xs)[:, 1][0])
+
+        preview_items = []
+        for k, v in df_num.iloc[0].to_dict().items():
+            if v != 0:
+                preview_items.append((k, float(v)))
+        preview_items = sorted(preview_items, key=lambda t: abs(t[1]), reverse=True)[:10]
+
+        return jsonify({
+            "num_features": len(FEATS),
+            "pre_cast_counts": pre_cast,
+            "prob_pcos": p1,
+            "risk": risk_band(p1),
+            "nonzero_fields": int((df_num != 0).sum(axis=1).iloc[0]),
+            "vector_top10_abs": preview_items,
+            "all_zero_after_norm": int((df_num.sum(axis=1).iloc[0] == 0)),
+        })
+    except Exception as e:
+        return jsonify({"error": f"/debug/vector failed: {repr(e)}"}), 500
 
 # -----------------------------
 # Optional LLM diagnostics
@@ -300,8 +329,7 @@ def llm_test():
 # Entrypoint
 # -----------------------------
 if __name__ == "__main__":
-    print(f"[flask] Loaded {len(FEATS)} features. Model & scaler ready.")
-    # optional: print routes to confirm "/" is registered
+    print(f"[flask] Loaded {len(FEATS)} features. Model & scaler & medians ready.")
     try:
         print("[flask] Routes loaded:")
         for r in app.url_map.iter_rules():

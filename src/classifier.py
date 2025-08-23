@@ -1,85 +1,151 @@
-# src/train_baseline.py
 """
-PCOS Risk Analysis Demo
-Author: Shubhi Sharma (github.com/sha-0916) | MIT
-"""
-import warnings; warnings.filterwarnings("ignore", category=FutureWarning)
+PCOS Risk Analysis - Trainer
+Author: Shubhi Sharma (github.com/sha-0916)
+License: MIT
 
-import numpy as np, pandas as pd
+Description:
+    Train a baseline (logistic regression) classifier on the Kaggle PCOS dataset.
+    - Cleans and merges inputs
+    - Preprocesses numerics
+    - Trains LogisticRegression(class_weight='balanced')
+    - Saves artifacts: model, scaler, features, medians
+    - Prints metrics
+
+Credits:
+    - Dataset: "Polycystic Ovary Syndrome (PCOS)" by Prasoon Kottarathil (Kaggle)
+    - Diagnostic context: Rotterdam 2003; International PCOS Guideline 2023
+"""
+
+from __future__ import annotations
+import warnings
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 from pathlib import Path
+import joblib
+import numpy as np
+import pandas as pd
 
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.calibration import CalibratedClassifierCV
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, brier_score_loss, roc_auc_score
-import joblib
+from sklearn.metrics import classification_report, confusion_matrix, accuracy_score
 
-DATA_DIR = Path(__file__).resolve().parents[1] / "data"
-MODEL_DIR = Path(__file__).resolve().parents[1] / "models"
-MODEL_DIR.mkdir(parents=True, exist_ok=True)
+# -----------------------------
+# Paths
+# -----------------------------
+ROOT = Path(__file__).resolve().parents[1]
+DATA_DIR = ROOT / "data"
+MODEL_DIR = ROOT / "models"
+MODEL_DIR.mkdir(exist_ok=True)
 
-def _maybe_drop(df, col):
-    if col in df.columns: df.drop(columns=[col], inplace=True)
+XLSX_PATH = DATA_DIR / "PCOS_data_without_infertility.xlsx"
+CSV_PATH  = DATA_DIR / "PCOS_infertility.csv"
+SHEET_NAME = "Full_new"
 
-def load_data():
-    xlsx = DATA_DIR / "PCOS_data_without_infertility.xlsx"
-    csv  = DATA_DIR / "PCOS_infertility.csv"
-    df_x = pd.read_excel(xlsx, sheet_name="Full_new")
-    df_c = pd.read_csv(csv)
+# -----------------------------
+# Helpers
+# -----------------------------
+def _maybe_drop(df: pd.DataFrame, col: str) -> None:
+    if col in df.columns:
+        df.drop(columns=[col], inplace=True)
 
-    df_x.rename(columns=lambda s: s.strip() if isinstance(s,str) else s, inplace=True)
-    df_c.rename(columns=lambda s: s.strip() if isinstance(s,str) else s, inplace=True)
-    _maybe_drop(df_x, "Unnamed: 44")
+def load_data(xlsx_path: Path, csv_path: Path, sheet_name: str = "Full_new") -> pd.DataFrame:
+    """Load and minimally clean/merge the two PCOS files."""
+    pcos_data = pd.read_excel(xlsx_path, sheet_name=sheet_name)
+    pcos_inf  = pd.read_csv(csv_path)
 
-    for c in ["Marraige Status (Yrs)", "Fast food (Y/N)"]:
-        if c in df_x.columns: df_x[c].fillna(df_x[c].median(), inplace=True)
+    # strip column names
+    pcos_data.rename(columns=lambda x: x.strip() if isinstance(x, str) else x, inplace=True)
+    pcos_inf.rename(columns=lambda x: x.strip() if isinstance(x, str) else x, inplace=True)
 
-    if "AMH(ng/mL)" in df_x.columns:
-        df_x["AMH(ng/mL)"] = pd.to_numeric(df_x["AMH(ng/mL)"], errors="coerce")
-        df_x["AMH(ng/mL)"].fillna(df_x["AMH(ng/mL)"].median(), inplace=True)
+    # drop empty Excel artifact
+    _maybe_drop(pcos_data, "Unnamed: 44")
 
-    _maybe_drop(df_x, "II    beta-HCG(mIU/mL)")
-    if "II    beta-HCG(mIU/mL)" in df_c.columns:
-        df_x = pd.concat([df_x.reset_index(drop=True),
-                          df_c[["II    beta-HCG(mIU/mL)"]].reset_index(drop=True)], axis=1)
-    return df_x
+    # fill some common missing values
+    for col in ["Marraige Status (Yrs)", "Fast food (Y/N)"]:
+        if col in pcos_data.columns:
+            pcos_data[col].fillna(pcos_data[col].median(), inplace=True)
+
+    # AMH to numeric
+    if "AMH(ng/mL)" in pcos_data.columns:
+        pcos_data["AMH(ng/mL)"] = pd.to_numeric(pcos_data["AMH(ng/mL)"], errors="coerce")
+        pcos_data["AMH(ng/mL)"].fillna(pcos_data["AMH(ng/mL)"].median(), inplace=True)
+
+    # remove duplicated beta-HCG if present and add from infertility file
+    _maybe_drop(pcos_data, "II    beta-HCG(mIU/mL)")
+    if "II    beta-HCG(mIU/mL)" in pcos_inf.columns:
+        pcos_data = pd.concat(
+            [pcos_data.reset_index(drop=True), pcos_inf[["II    beta-HCG(mIU/mL)"]].reset_index(drop=True)],
+            axis=1,
+        )
+
+    return pcos_data
 
 def prepare_xy(df: pd.DataFrame):
-    y = df["PCOS (Y/N)"].astype(int)
-    X = df.drop(columns=[c for c in ["PCOS (Y/N)", "Sl. No", "Patient File No."] if c in df.columns])
-    X = X.select_dtypes(include=[np.number]).copy()
+    """Select features/target, numeric-only, median-fill."""
+    if "PCOS (Y/N)" not in df.columns:
+        raise ValueError("Target column 'PCOS (Y/N)' not found in data.")
+
+    y = df["PCOS (Y/N)"].copy()
+
+    drop_cols = [c for c in ["PCOS (Y/N)", "Sl. No", "Patient File No.", "Blood Group"] if c in df.columns]
+    X = df.drop(columns=drop_cols).copy()
+
+    # numeric only
+    X = X.select_dtypes(include=[np.number])
+
+    # fill numerics with column medians (training-time)
     X = X.fillna(X.median(numeric_only=True))
+
     return X, y
 
+# -----------------------------
+# Train
+# -----------------------------
 def main():
-    df = load_data()
+    print("[trainer] Loading data…")
+    df = load_data(XLSX_PATH, CSV_PATH, sheet_name=SHEET_NAME)
+    print(f"[trainer] Shape after load: {df.shape}")
+
+    print("[trainer] Preparing features/labels…")
     X, y = prepare_xy(df)
+    feats = list(X.columns)
+    print(f"[trainer] Features={len(feats)} Samples={len(X)} Positives={int(y.sum())}")
 
-    Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42, stratify=y
+    )
 
+    # scale numerics
     scaler = StandardScaler()
-    Xtr_s, Xte_s = scaler.fit_transform(Xtr), scaler.transform(Xte)
+    X_train_s = scaler.fit_transform(X_train)
+    X_test_s  = scaler.transform(X_test)
 
-    base = LogisticRegression(max_iter=500)
-    model = CalibratedClassifierCV(estimator=base, method="isotonic", cv=5)
-    model.fit(Xtr_s, ytr)
+    # balanced logistic regression helps with class imbalance
+    model = LogisticRegression(max_iter=500, class_weight="balanced")
+    model.fit(X_train_s, y_train)
 
-    yhat = model.predict(Xte_s)
-    p1   = model.predict_proba(Xte_s)[:,1]
+    # metrics
+    train_acc = accuracy_score(y_train, model.predict(X_train_s))
+    test_acc  = accuracy_score(y_test, model.predict(X_test_s))
+    print(f"[trainer] Train accuracy: {train_acc:.3f}  |  Test accuracy: {test_acc:.3f}")
 
-    print("\n=== Metrics ===")
-    print("Accuracy:", round(accuracy_score(yte, yhat), 3))
-    print("ROC AUC :", round(roc_auc_score(yte, p1), 3))
-    print("Brier   :", round(brier_score_loss(yte, p1), 4))
-    print("\nConfusion matrix:\n", confusion_matrix(yte, yhat))
-    print("\nClassification report:\n", classification_report(yte, yhat, digits=3))
+    y_pred = model.predict(X_test_s)
+    print("[trainer] Confusion matrix (rows=true, cols=pred):")
+    print(confusion_matrix(y_test, y_pred))
+    print("[trainer] Classification report:")
+    print(classification_report(y_test, y_pred, digits=3))
 
     # save artifacts
+    medians = X.median(numeric_only=True).to_dict()
+
     joblib.dump(model,   MODEL_DIR / "pcos_model.pkl")
     joblib.dump(scaler,  MODEL_DIR / "scaler.pkl")
-    joblib.dump(list(X.columns), MODEL_DIR / "features.pkl")
-    print(f"\nSaved to {MODEL_DIR}")
+    joblib.dump(feats,   MODEL_DIR / "features.pkl")
+    joblib.dump(medians, MODEL_DIR / "medians.pkl")
+
+    print(f"[trainer] Saved artifacts to: {MODEL_DIR.resolve()}")
+    print("[trainer] Done.")
 
 if __name__ == "__main__":
     main()

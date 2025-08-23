@@ -100,6 +100,48 @@
     </div>
   </div>
 
+  <div class="row">
+    <div class="card col">
+      <h3>5) Debug: feature vector</h3>
+      <label>Body (JSON)</label>
+      <textarea id="debugBody">{
+  "data": {
+    "Age (yrs)": 23,
+    "BMI": 32,
+    "Cycle length(days)": 50,
+    "AMH(ng/mL)": 7.5,
+    "Cycle(R/I)": "I",
+    "Pregnant(Y/N)": "N",
+    "hair growth(Y/N)": "Y",
+    "Pimples(Y/N)": "Y",
+    "Skin darkening (Y/N)": "Y",
+    "Reg.Exercise(Y/N)": "N",
+    "Fast food (Y/N)": "Y",
+    "Follicle No. (L)": 15,
+    "Follicle No. (R)": 16,
+    "LH(mIU/mL)": 12,
+    "FSH(mIU/mL)": 5,
+    "FSH/LH)": 0.42,
+    "Waist(inch)": 36,
+    "Hip(inch)": 40,
+    "Waist:Hip Ratio": 0.9
+  }
+}</textarea>
+      <div><button onclick="postDebugVector()">POST /debug/vector</button></div>
+      <pre id="out-debug">← results appear here</pre>
+    </div>
+
+    <div class="card col">
+      <h3>Tips</h3>
+      <ul>
+        <li>Use exact feature names from <code>/features</code>.</li>
+        <li>Y/N fields accept "Y"/"N" (server normalizes).</li>
+        <li>Cycle(R/I) accepts "R" or "I".</li>
+        <li>If probabilities stay near 0, send more fields or implement training-median fills.</li>
+      </ul>
+    </div>
+  </div>
+
   <script>
     const $ = (id) => document.getElementById(id);
     const pill = (risk) => `<span class="pill ${risk}">${(risk||'low').toUpperCase()}</span>`;
@@ -131,11 +173,11 @@
       setOut('out-meta', res);
     }
     async function llmModels() {
-      const res = await GET('/llm/models'); // works if you added the optional endpoint
+      const res = await GET('/llm/models'); // if not added in Flask, will 404
       setOut('out-meta', res);
     }
     async function llmTest() {
-      const res = await POST('/llm/test', {}); // works if you added the optional endpoint
+      const res = await POST('/llm/test', {}); // if not added in Flask, will 404
       setOut('out-meta', res);
     }
 
@@ -155,7 +197,6 @@
       try {
         const body = JSON.parse($('counselBody').value);
         const res = await POST('/counsel', body);
-        // Pretty print with risk pill
         if (res.json && res.json.risk) {
           $('out-counsel').innerHTML =
             JSON.stringify({ ...res, json: { ...res.json, risk: undefined } }, null, 2) +
@@ -203,6 +244,17 @@
       const q = (res.json && res.json.next_questions && res.json.next_questions[0]) || null;
       lastQuestion = q;
       $('questionBox').textContent = q ? q.question_text : 'No more questions.';
+    }
+
+    // 5) Debug vector
+    async function postDebugVector() {
+      try {
+        const body = JSON.parse($('debugBody').value);
+        const res = await POST('/debug/vector', body);
+        setOut('out-debug', res);
+      } catch (e) {
+        setOut('out-debug', { error: 'Invalid JSON', detail: String(e) });
+      }
     }
   </script>
 </body>
