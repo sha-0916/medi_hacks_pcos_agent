@@ -312,6 +312,33 @@ def llm_models():
         return r.json(), r.status_code
     except Exception as e:
         return {"error": f"Ollama unreachable: {repr(e)}"}, 502
+    
+@app.post("/chat")
+def chat():
+    try:
+        payload = request.get_json(force=True) or {}
+        prompt = payload.get("prompt", "").strip()
+        if not prompt:
+            return {"reply": "Please type a message."}, 200
+
+        # Compose a safe system + user prompt
+        system = (
+            "You are a careful health assistant for PCOS. You educate and provide next-step suggestions. "
+            "You DO NOT diagnose. If red-flag symptoms are present, advise urgent/ER care. Keep answers concise."
+        )
+        full = f"{system}\n\nUser: {prompt}\nAssistant:"
+        r = requests.post(
+            "http://127.0.0.1:11434/api/generate",
+            json={"model": "phi3:mini", "prompt": full, "stream": False, "keep_alive": "10m", "temperature": 0.2},
+            timeout=90,
+        )
+        if r.status_code != 200:
+            return {"reply": "(LLM unavailable right now. Please try again.)"}, 200
+        data = r.json()
+        return {"reply": data.get("response", "").strip() or "(No reply)"}, 200
+    except Exception:
+        return {"reply": "(LLM unavailable right now. Please try again.)"}, 200
+
 
 @app.post("/llm/test")
 def llm_test():
