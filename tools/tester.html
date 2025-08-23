@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PCOS API Tester (Flask + Ollama)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 24px; max-width: 1100px; }
+    h1 { margin-bottom: 6px; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 12px; padding: 16px; margin: 12px 0; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+    label { font-size: 12px; color: #374151; display:block; margin-bottom: 6px; }
+    input[type="text"] { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #d1d5db; }
+    textarea { width: 100%; min-height: 120px; padding: 10px; border-radius: 10px; border: 1px solid #d1d5db; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    button { padding: 10px 14px; border-radius: 10px; border: none; background: #111827; color: white; cursor: pointer; }
+    button.secondary { background: #6b7280; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    pre { background: rgba(0,0,0,.04); padding: 10px; border-radius: 10px; overflow:auto; }
+    .pill { display:inline-block; padding:4px 10px; border-radius:9999px; font-size:12px; margin-left:8px; }
+    .low{ background:#ecfeff; color:#155e75;} .medium{ background:#fef9c3; color:#854d0e;} .high{ background:#fee2e2; color:#7f1d1d;}
+    .col { display:flex; flex-direction:column; gap:12px; }
+  </style>
+</head>
+<body>
+  <h1>PCOS API Tester</h1>
+  <div class="muted">For your Flask app running on http://127.0.0.1:8000 (uses CORS)</div>
+
+  <div class="card">
+    <label>API base URL</label>
+    <input id="api" type="text" value="http://127.0.0.1:8000" />
+  </div>
+
+  <div class="row">
+    <div class="card col">
+      <h3>1) Features / Health</h3>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button onclick="getFeatures()">GET /features</button>
+        <button class="secondary" onclick="getHealth()">GET /health</button>
+        <button class="secondary" onclick="llmModels()">GET /llm/models</button>
+        <button class="secondary" onclick="llmTest()">POST /llm/test</button>
+      </div>
+      <pre id="out-meta">← results appear here</pre>
+    </div>
+
+    <div class="card col">
+      <h3>2) Predict (no LLM)</h3>
+      <label>Patient data (JSON)</label>
+      <textarea id="predictBody">{ 
+  "data": {
+    "BMI": 28,
+    "Age (yrs)": 25,
+    "Cycle length(days)": 40,
+    "AMH(ng/mL)": 6.2,
+    "Cycle(R/I)": "I",
+    "Pregnant(Y/N)": "N"
+  }
+}</textarea>
+      <div><button onclick="postPredict()">POST /predict</button></div>
+      <pre id="out-predict">← results appear here</pre>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="card col">
+      <h3>3) Counsel (one-shot: classifier + RAG + LLM)</h3>
+      <label>Body (JSON)</label>
+      <textarea id="counselBody">{
+  "data": {
+    "BMI": 28,
+    "Age (yrs)": 25,
+    "Cycle length(days)": 40,
+    "AMH(ng/mL)": 6.2
+  },
+  "symptoms": ["oligo-ovulation"]
+}</textarea>
+      <div><button onclick="postCounsel()">POST /counsel</button></div>
+      <pre id="out-counsel">← results appear here</pre>
+    </div>
+
+    <div class="card col">
+      <h3>4) Interactive flow</h3>
+      <label>Start body (JSON)</label>
+      <textarea id="interactiveStart">{
+  "data": {
+    "BMI": 28,
+    "Age (yrs)": 25,
+    "Cycle length(days)": 40,
+    "AMH(ng/mL)": 6.2
+  }
+}</textarea>
+      <div style="display:flex; gap:8px;">
+        <button onclick="startInteractive()">Start (/counsel-interactive)</button>
+        <button class="secondary" onclick="answerYes()">Answer YES</button>
+        <button class="secondary" onclick="answerNo()">Answer NO</button>
+      </div>
+      <div id="questionBox" class="muted" style="margin-top:6px;">No question yet.</div>
+      <pre id="out-interactive">← results appear here</pre>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const pill = (risk) => `<span class="pill ${risk}">${(risk||'low').toUpperCase()}</span>`;
+    const api = () => $('api').value.trim().replace(/\/$/, '');
+
+    async function GET(path) {
+      const r = await fetch(api()+path, { method: 'GET' });
+      return { status: r.status, json: await r.json().catch(()=>({})) };
+    }
+    async function POST(path, body) {
+      const r = await fetch(api()+path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      let data;
+      try { data = await r.json(); } catch { data = { raw: await r.text() }; }
+      return { status: r.status, json: data };
+    }
+    function setOut(id, obj) { $(id).textContent = JSON.stringify(obj, null, 2); }
+
+    // 1) Meta
+    async function getFeatures() {
+      const res = await GET('/features');
+      setOut('out-meta', res);
+    }
+    async function getHealth() {
+      const res = await GET('/health');
+      setOut('out-meta', res);
+    }
+    async function llmModels() {
+      const res = await GET('/llm/models'); // works if you added the optional endpoint
+      setOut('out-meta', res);
+    }
+    async function llmTest() {
+      const res = await POST('/llm/test', {}); // works if you added the optional endpoint
+      setOut('out-meta', res);
+    }
+
+    // 2) Predict
+    async function postPredict() {
+      try {
+        const body = JSON.parse($('predictBody').value);
+        const res = await POST('/predict', body);
+        setOut('out-predict', res);
+      } catch (e) {
+        setOut('out-predict', { error: 'Invalid JSON', detail: String(e) });
+      }
+    }
+
+    // 3) Counsel
+    async function postCounsel() {
+      try {
+        const body = JSON.parse($('counselBody').value);
+        const res = await POST('/counsel', body);
+        // Pretty print with risk pill
+        if (res.json && res.json.risk) {
+          $('out-counsel').innerHTML =
+            JSON.stringify({ ...res, json: { ...res.json, risk: undefined } }, null, 2) +
+            `\nRisk: ${pill(res.json.risk)}`;
+        } else {
+          setOut('out-counsel', res);
+        }
+      } catch (e) {
+        setOut('out-counsel', { error: 'Invalid JSON', detail: String(e) });
+      }
+    }
+
+    // 4) Interactive
+    let lastAnswered = [];
+    let lastQuestion = null;
+
+    async function startInteractive() {
+      try {
+        lastAnswered = [];
+        lastQuestion = null;
+        $('questionBox').textContent = 'Fetching...';
+        const body = JSON.parse($('interactiveStart').value);
+        const res = await POST('/counsel-interactive', body);
+        setOut('out-interactive', res);
+        const q = (res.json && res.json.next_questions && res.json.next_questions[0]) || null;
+        lastQuestion = q;
+        $('questionBox').textContent = q ? q.question_text : 'No question (low risk or none left).';
+      } catch (e) {
+        setOut('out-interactive', { error: 'Invalid JSON', detail: String(e) });
+      }
+    }
+
+    async function answerYes() { await answer('yes'); }
+    async function answerNo()  { await answer('no');  }
+
+    async function answer(ans) {
+      if (!lastQuestion) {
+        $('questionBox').textContent = 'No pending question. Click Start.';
+        return;
+      }
+      const startBody = JSON.parse($('interactiveStart').value);
+      lastAnswered.push({ question_id: lastQuestion.question_id, answer: ans });
+      const res = await POST('/counsel-interactive', { data: startBody.data, answered: lastAnswered });
+      setOut('out-interactive', res);
+      const q = (res.json && res.json.next_questions && res.json.next_questions[0]) || null;
+      lastQuestion = q;
+      $('questionBox').textContent = q ? q.question_text : 'No more questions.';
+    }
+  </script>
+</body>
+</html>
