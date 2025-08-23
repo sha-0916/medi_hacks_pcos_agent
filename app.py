@@ -176,6 +176,27 @@ def counsel_interactive():
         return jsonify({"risk": band, "prob_pcos": p1, "counseling": text, "evidence_used": items, "next_questions": nxt})
     except Exception as e:
         return jsonify({"error": "/counsel-interactive failed", "detail": repr(e)}), 500
+    
+@app.get("/llm/models")
+def llm_models():
+    try:
+        r = requests.get("http://127.0.0.1:11434/api/tags", timeout=10)
+        return r.json(), r.status_code
+    except Exception as e:
+        return {"error": f"Ollama unreachable: {repr(e)}"}, 502
+
+@app.post("/llm/test")
+def llm_test():
+    try:
+        r = requests.post(
+            "http://127.0.0.1:11434/api/generate",
+            json={"model": "llama3.1:8b", "prompt": "hello", "stream": False},
+            timeout=180,
+        )
+        return r.json(), r.status_code
+    except Exception as e:
+        return {"error": f"Ollama generate failed: {repr(e)}"}, 502
+
 
 if __name__ == "__main__":
     print(f"[flask] Loaded {len(FEATS)} features. Model & scaler ready.")

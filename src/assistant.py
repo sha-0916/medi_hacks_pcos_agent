@@ -2,7 +2,7 @@ import requests
 from typing import List, Dict, Any
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-MODEL_NAME = "llama3.1:8b"  # run:  ollama pull llama3.1:8b
+MODEL_NAME = "phi3:mini"  # run:  ollama pull llama3.1:8b
 
 def bullets(items: List[Dict[str, Any]]) -> str:
     lines = []
@@ -33,6 +33,6 @@ Instructions:
 """
 
 def call_llm(prompt: str) -> str:
-    r = requests.post(OLLAMA_URL, json={"model": MODEL_NAME, "prompt": prompt, "temperature": 0.2, "stream": False}, timeout=60)
+    r = requests.post(OLLAMA_URL, json={"model": MODEL_NAME, "prompt": prompt, "temperature": 0.2, "stream": False, "keep_alive": "10m"}, timeout=180)
     r.raise_for_status()
     return (r.json().get("response") or "").strip()
