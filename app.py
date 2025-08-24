@@ -24,7 +24,7 @@ TOOLS_DIR = ROOT / "tools"  # serve tools/tester.html at "/"
 MODEL   = joblib.load(MODEL_DIR / "pcos_model.pkl")
 SCALER  = joblib.load(MODEL_DIR / "scaler.pkl")
 FEATS   = joblib.load(MODEL_DIR / "features.pkl")
-MEDIANS = joblib.load(MODEL_DIR / "medians.pkl")  # NEW: training-time medians
+MEDIANS = joblib.load(MODEL_DIR / "medians.pkl")  # training-time medians
 
 DF_FUP = pd.read_csv(DATA_DIR / "followups.csv")
 
@@ -93,7 +93,7 @@ def home():
     button{border:0;cursor:pointer}.muted{color:#6b7280;font-size:12px}pre{background:#f3f4f6;padding:12px;border-radius:10px;overflow:auto}</style>
     </head><body>
       <h1>PCOS Risk API</h1>
-      <p class="muted">Screening demo — not a diagnosis.</p>
+      <p class="muted">Screening demo.</p>
       <div><a href="/health">GET /health</a> <a href="/features">GET /features</a></div>
       <h3>Quick test: /predict</h3><pre id="out">{ "click": "Run test" }</pre>
       <button onclick="run()">POST /predict</button>
@@ -108,7 +108,7 @@ def home():
           document.getElementById("out").textContent = JSON.stringify(j,null,2);
         }
       </script>
-      <p class="muted">Tip: add tools/tester.html for a full tester UI.</p>
+      <p class="muted">Tip: use your React UI for the assistant experience.</p>
     </body></html>
     """
 
@@ -116,7 +116,7 @@ def home():
 # Core helpers
 # -----------------------------
 def _make_feature_frame(payload: Dict[str, Any]) -> pd.DataFrame:
-    """Normalize, align to FEATS, cast to float, fill NaNs, scale."""
+    """Normalize, align to FEATS, cast to float, fill NaNs."""
     data = normalize_features(payload.get("data", {}))
     df = pd.DataFrame([data])
 
@@ -144,7 +144,6 @@ def health():
 
 @app.get("/features")
 def features():
-    # optional: include a template with medians so UIs can prefill
     tmpl = {name: float(MEDIANS.get(name, 0.0)) for name in FEATS}
     return jsonify({"features": FEATS, "template": tmpl})
 
@@ -255,54 +254,6 @@ def counsel_interactive():
         return jsonify({"error": "/counsel-interactive failed", "detail": repr(e)}), 500
 
 # -----------------------------
-# Debug route (vector inspection)
-# -----------------------------
-@app.post("/debug/vector")
-def debug_vector():
-    try:
-        payload = request.get_json(force=True) or {}
-        data = payload.get("data", {})
-        df = pd.DataFrame([normalize_features(data)])
-
-        # ensure features with training medians
-        for c in FEATS:
-            if c not in df.columns:
-                df[c] = MEDIANS.get(c, 0.0)
-        df = df[FEATS]
-
-        pre_cast = {
-            "nonzero": int((df != 0).sum(axis=1).iloc[0]),
-            "num_na": int(df.isna().sum(axis=1).iloc[0]),
-        }
-
-        try:
-            df_num = df.astype(float)
-        except Exception as e:
-            return jsonify({"error": f"astype(float) failed: {e}", "vector_preview": df.iloc[0].to_dict()}), 400
-        df_num = df_num.fillna(df_num.median(numeric_only=True))
-
-        Xs = SCALER.transform(df_num)
-        p1 = float(MODEL.predict_proba(Xs)[:, 1][0])
-
-        preview_items = []
-        for k, v in df_num.iloc[0].to_dict().items():
-            if v != 0:
-                preview_items.append((k, float(v)))
-        preview_items = sorted(preview_items, key=lambda t: abs(t[1]), reverse=True)[:10]
-
-        return jsonify({
-            "num_features": len(FEATS),
-            "pre_cast_counts": pre_cast,
-            "prob_pcos": p1,
-            "risk": risk_band(p1),
-            "nonzero_fields": int((df_num != 0).sum(axis=1).iloc[0]),
-            "vector_top10_abs": preview_items,
-            "all_zero_after_norm": int((df_num.sum(axis=1).iloc[0] == 0)),
-        })
-    except Exception as e:
-        return jsonify({"error": f"/debug/vector failed: {repr(e)}"}), 500
-
-# -----------------------------
 # Optional LLM diagnostics
 # -----------------------------
 @app.get("/llm/models")
@@ -312,7 +263,7 @@ def llm_models():
         return r.json(), r.status_code
     except Exception as e:
         return {"error": f"Ollama unreachable: {repr(e)}"}, 502
-    
+
 @app.post("/chat")
 def chat():
     try:
@@ -321,7 +272,6 @@ def chat():
         if not prompt:
             return {"reply": "Please type a message."}, 200
 
-        # Compose a safe system + user prompt
         system = (
             "You are a careful health assistant for PCOS. You educate and provide next-step suggestions. "
             "You DO NOT diagnose. If red-flag symptoms are present, advise urgent/ER care. Keep answers concise."
@@ -339,13 +289,12 @@ def chat():
     except Exception:
         return {"reply": "(LLM unavailable right now. Please try again.)"}, 200
 
-
 @app.post("/llm/test")
 def llm_test():
     try:
         r = requests.post(
             "http://127.0.0.1:11434/api/generate",
-            json={"model": "llama3.1:8b", "prompt": "hello", "stream": False, "keep_alive": "10m"},
+            json={"model": "phi3:mini", "prompt": "hello", "stream": False, "keep_alive": "10m"},
             timeout=180,
         )
         return r.json(), r.status_code

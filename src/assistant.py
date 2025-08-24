@@ -1,15 +1,17 @@
 import requests
 from typing import List, Dict, Any
 
+# Locked to local Ollama + phi3:mini
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-MODEL_NAME = "phi3:mini"  # run:  ollama pull llama3.1:8b
+MODEL_NAME = "phi3:mini"
 
 def bullets(items: List[Dict[str, Any]]) -> str:
     lines = []
     for it in items[:5]:
         sug = (it.get("suggestion") or "").strip()
         src = (it.get("source") or "").strip()
-        if not sug: continue
+        if not sug:
+            continue
         lines.append(f"• {sug}" + (f" ({src})" if src else ""))
     return "\n".join(lines) if lines else "• Provide general PCOS education and lifestyle guidance. (Guideline 2023)"
 
@@ -33,6 +35,10 @@ Instructions:
 """
 
 def call_llm(prompt: str) -> str:
-    r = requests.post(OLLAMA_URL, json={"model": MODEL_NAME, "prompt": prompt, "temperature": 0.2, "stream": False, "keep_alive": "10m"}, timeout=180)
+    r = requests.post(
+        OLLAMA_URL,
+        json={"model": MODEL_NAME, "prompt": prompt, "temperature": 0.2, "stream": False, "keep_alive": "10m"},
+        timeout=180
+    )
     r.raise_for_status()
     return (r.json().get("response") or "").strip()

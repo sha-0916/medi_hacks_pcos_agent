@@ -1,358 +1,318 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { RadialBarChart, RadialBar, Legend } from "recharts";
+import React, { useEffect, useState } from "react";
+import "./index.css";
 
+/** -------------------------------------------
+ *  CONFIG
+ * ------------------------------------------*/
 const API_BASE = import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000";
 
-/* ---------- Small UI parts ---------- */
-function MedicalLogo() {
-  return (
-    <svg viewBox="0 0 48 48" className="nurse" aria-hidden="true">
-      <defs>
-        <linearGradient id="g" x1="0" x2="1" y1="0" y2="1">
-          <stop offset="0" stopColor="#2563eb"/><stop offset="1" stopColor="#22c55e"/>
-        </linearGradient>
-      </defs>
-      <rect x="1" y="6" width="46" height="36" rx="8" fill="url(#g)"/>
-      <rect x="6" y="11" width="36" height="26" rx="6" fill="#fff" />
-      <path d="M24 14 l0 20 M14 24 l20 0" stroke="#2563eb" strokeWidth="3" strokeLinecap="round"/>
-    </svg>
-  );
-}
-function NurseAvatar() {
-  return (
-    <div className="avatar" title="Nurse">
-      <svg viewBox="0 0 48 48" className="nurse" aria-hidden="true">
-        <circle cx="24" cy="24" r="22" fill="#e5f0ff" stroke="#cfe0ff"/>
-        <path d="M14 30c3-3 7-4 10-4s7 1 10 4v6H14v-6z" fill="#fff" stroke="#cfe0ff"/>
-        <circle cx="24" cy="22" r="6" fill="#fff" stroke="#cfe0ff"/>
-        <rect x="16" y="10" width="16" height="8" rx="2" fill="#2563eb"/>
-        <path d="M24 12 v4 M22 14 h4" stroke="#fff" strokeWidth="2" strokeLinecap="round"/>
-      </svg>
-    </div>
-  );
-}
-function Pill({ risk }) {
-  const r = (risk || "low").toLowerCase();
-  return <span className={`pill ${r}`}>{r.toUpperCase()}</span>;
-}
-function Gauge({ prob }) {
-  const pct = Math.round((prob || 0) * 100);
-  const data = [{ name: "PCOS", value: pct }];
-  return (
-    <div style={{ width: 260, height: 200 }}>
-      <RadialBarChart width={260} height={200} innerRadius="60%" outerRadius="100%" data={data} startAngle={180} endAngle={-180}>
-        <RadialBar minAngle={8} clockWise dataKey="value" />
-        <Legend layout="vertical" verticalAlign="middle" wrapperStyle={{ top: "30%", left: "62%" }} />
-      </RadialBarChart>
-      <div style={{ textAlign: "center", marginTop: -20 }}>
-        <div style={{ fontSize: 24, fontWeight: 800 }}>{pct}%</div>
-        <div style={{ color: "var(--muted)" }}>probability</div>
-      </div>
-    </div>
-  );
+/** Compute local risk band from probability in [0..1] */
+function localRiskBand(p) {
+  if (p < 0.33) return "low";
+  if (p < 0.66) return "medium";
+  return "high";
 }
 
-/* ---------- Chat Pane ---------- */
-function ChatPane() {
-  const [messages, setMessages] = useState([
-    { role: "assistant", text: "Hi! I’m your PCOS Assistant. How can I help you today?" }
-  ]);
-  const [text, setText] = useState("");
-  const [thinking, setThinking] = useState(false);
-  const boxRef = useRef(null);
-
-  useEffect(() => {
-    const el = boxRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, thinking]);
-
-  async function send() {
-    const prompt = text.trim();
-    if (!prompt) return;
-    setText("");
-    setMessages((m) => [...m, { role: "user", text: prompt }]);
-    setThinking(true);
-
-    try {
-      const r = await fetch(`${API_BASE}/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt,
-          history: messages.map(({ role, text }) => ({ role, text })),
-        }),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!r.ok) throw new Error(`status ${r.status}`);
-      const j = await r.json();
-      const reply = j.reply || j.text || "(No reply)";
-      setMessages((m) => [...m, { role: "assistant", text: reply }]);
-    } catch (e) {
-      setMessages((m) => [...m, {
-        role: "assistant",
-        text:
-          "I'm here to assist with PCOS-related questions, lab interpretation context, risk factors, and next-step options."
-      }]);
-    } finally {
-      setThinking(false);
-    }
-  }
-
-  function onKey(e) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      send();
-    }
-  }
-
-  return (
-    <div className="card">
-      <h3 className="section-title" style={{ display:"flex", alignItems:"center", gap:10 }}>
-        <NurseAvatar /> Chat
-      </h3>
-      <div className="chat-wrap">
-        <div className="chat-box" ref={boxRef}>
-          {messages.map((m, i) => (
-            <div key={i} className={`msg ${m.role === "user" ? "user" : ""}`}>
-              {m.role !== "user" ? <NurseAvatar /> : null}
-              <div className="bubble">{m.text}</div>
-            </div>
-          ))}
-          {thinking ? (
-            <div className="msg">
-              <NurseAvatar />
-              <div className="bubble"><span className="spinner dark"></span> Thinking…</div>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="chat-input">
-          <input
-            className="input"
-            placeholder="Type a message… (e.g., Suggest workup for oligomenorrhea)"
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={onKey}
-          />
-          <button className="btn" onClick={send} disabled={thinking || !text.trim()}>
-            {thinking ? (<><span className="spinner" />&nbsp;Sending…</>) : "Send"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-/* ---------- Details / Results Pane ---------- */
-const CORE_FIELDS = [
-  "Age (yrs)", "BMI", "Cycle length(days)", "AMH(ng/mL)", "Cycle(R/I)", "Pregnant(Y/N)",
-  "LH(mIU/mL)", "FSH(mIU/mL)", "FSH/LH", "Follicle No. (L)", "Follicle No. (R)",
-  "hair growth(Y/N)", "Pimples(Y/N)", "Skin darkening (Y/N)"
-];
-
-function DetailsPane() {
-  const [features, setFeatures] = useState([]);
+export default function App() {
   const [template, setTemplate] = useState({});
-  const [values, setValues] = useState({});
-  const [filter, setFilter] = useState("");
-  const [result, setResult] = useState(null);
-  const [thinking, setThinking] = useState(false);
-  const [answers, setAnswers] = useState([]);
+  const [loading, setLoading] = useState(false);
 
+  // form fields
+  const [age, setAge] = useState("");
+  const [bmi, setBmi] = useState("");
+  const [cycle, setCycle] = useState("");
+  const [cycleLen, setCycleLen] = useState("");
+  const [amh, setAmh] = useState("");
+  const [lh, setLh] = useState("");
+  const [fsh, setFsh] = useState("");
+  const [folL, setFolL] = useState("");
+  const [folR, setFolR] = useState("");
+  const [preg, setPreg] = useState("");
+
+  // assistant state
+  const [prob, setProb] = useState(null);      // numeric 0..1
+  const [risk, setRisk] = useState("");        // backend risk string
+  const [chat, setChat] = useState([]);        // [{who:"bot"|"user", text:string}]
+  const [qaVisible, setQaVisible] = useState(false);
+  const [lastQuestion, setLastQuestion] = useState(null);
+  const [answered, setAnswered] = useState([]);
+  const [hint, setHint] = useState("");
+
+  // debug state
+  const [lastEndpoint, setLastEndpoint] = useState("");
+  const [lastResponse, setLastResponse] = useState(null);
+  const [showDebug, setShowDebug] = useState(true); // default ON to troubleshoot
+
+  /** -------------------------------------------
+   *  INIT: fetch features/template (training medians)
+   * ------------------------------------------*/
   useEffect(() => {
-    (async () => {
-      const r = await fetch(`${API_BASE}/features`);
-      const j = await r.json();
-      setFeatures(j.features || []);
-      setTemplate(j.template || {});
-      setValues(j.template || {});
-    })();
+    fetch(`${API_BASE}/features`)
+      .then((r) => r.json())
+      .then((j) => setTemplate(j.template || {}))
+      .catch(() => {});
   }, []);
 
-  const core = useMemo(() => CORE_FIELDS.filter((f) => features.includes(f)), [features]);
-  const more = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    const rest = features.filter((f) => !core.includes(f));
-    return q ? rest.filter((f) => f.toLowerCase().includes(q)) : rest;
-  }, [filter, features, core]);
+  /** UI helpers */
+  const addBubble = (text, who = "bot") =>
+    setChat((c) => [...c, { who, text }]);
 
-  function setVal(field, v) { setValues((prev) => ({ ...prev, [field]: v })); }
+  const resetConversation = () => {
+    setChat([]);
+    setQaVisible(false);
+    setLastQuestion(null);
+    setAnswered([]);
+    setHint("");
+    setProb(null);
+    setRisk("");
+    setLastResponse(null);
+  };
 
-  function payload() {
-    const data = {};
-    for (const k of features) {
-      const raw = values[k];
-      if (raw === "" || raw === undefined || raw === null) continue;
-      const num = Number(raw);
-      data[k] = Number.isFinite(num) && raw !== true && raw !== false ? num : raw;
-    }
-    return { data };
+  /** Build payload.data from inputs (seeded with training medians) */
+  function collectData() {
+    const d = { ...template }; // start from medians to avoid zeros
+    const v = (x) => (x === "" || x == null ? null : x);
+    if (v(age) != null) d["Age (yrs)"] = Number(age);
+    if (v(bmi) != null) d["BMI"] = Number(bmi);
+    if (v(cycle)) d["Cycle(R/I)"] = cycle; // "R" or "I"
+    if (v(cycleLen) != null) d["Cycle length(days)"] = Number(cycleLen);
+    if (v(amh) != null) d["AMH(ng/mL)"] = Number(amh);
+    if (v(lh) != null) d["LH(mIU/mL)"] = Number(lh);
+    if (v(fsh) != null) d["FSH(mIU/mL)"] = Number(fsh);
+    if (v(folL) != null) d["Follicle No. (L)"] = Number(folL);
+    if (v(folR) != null) d["Follicle No. (R)"] = Number(folR);
+    if (v(preg)) d["Pregnant(Y/N)"] = preg; // "Y"/"N"
+    return d;
   }
 
-  async function getResult(reset=true) {
-    setThinking(true);
+  /** -------------------------------------------
+   *  FLOW: start (predict + either counsel or first follow-up)
+   * ------------------------------------------*/
+  async function startFlow() {
+    setLoading(true);
+    resetConversation();
+    addBubble("Analyzing your details…");
+
+    const payload = { data: collectData(), answered: [] };
+    setLastEndpoint(`${API_BASE}/counsel-interactive`);
+
     try {
-      const body = payload();
       const r = await fetch(`${API_BASE}/counsel-interactive`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(reset ? body : { ...body, answered: answers })
+        body: JSON.stringify(payload),
       });
       const j = await r.json();
-      setResult(j);
-      if (reset) setAnswers([]);
+      setLastResponse(j);
+
+      const p = typeof j.prob_pcos === "number" ? j.prob_pcos : Number(j.prob_pcos);
+      setProb(isFinite(p) ? p : 0);
+      setRisk((j.risk || "").trim());
+
+      // If low risk or no next question → one-shot counseling
+      if (j.counseling && (j.risk === "low" || !j.next_questions || j.next_questions.length === 0)) {
+        addBubble(j.counseling, "bot");
+        setHint("Low risk: one-time counseling provided.");
+        setQaVisible(false);
+      } else if (j.next_questions && j.next_questions.length > 0) {
+        const q = j.next_questions[0];
+        setLastQuestion(q);
+        const qText = q.text || q.question_text || "Please answer this question.";
+        addBubble(qText, "bot");
+        setQaVisible(true);
+        setHint("Answer follow-up to refine counseling.");
+      } else {
+        addBubble("No follow-ups needed.", "bot");
+        setQaVisible(false);
+      }
+    } catch (e) {
+      addBubble("Sorry—something went wrong. Please try again.", "bot");
     } finally {
-      setThinking(false);
+      setLoading(false);
     }
   }
 
-  async function answerFollowup(ans) {
-    if (!result?.next_questions?.length) return;
-    const q = result.next_questions[0];
-    const newAnswers = [...answers, { question_id: q.question_id, answer: ans }];
-    setAnswers(newAnswers);
-    await getResult(false);
+  /** -------------------------------------------
+   *  FLOW: answer follow-up
+   * ------------------------------------------*/
+  async function sendAnswer(ans) {
+    if (!lastQuestion) return;
+    addBubble(ans, "user");
+    const newAnswered = [...answered, { question_id: lastQuestion.question_id, answer: ans }];
+    setAnswered(newAnswered);
+
+    const payload = { data: collectData(), answered: newAnswered };
+    setLoading(true);
+    setLastEndpoint(`${API_BASE}/counsel-interactive`);
+
+    try {
+      const r = await fetch(`${API_BASE}/counsel-interactive`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      setLastResponse(j);
+
+      const p = typeof j.prob_pcos === "number" ? j.prob_pcos : Number(j.prob_pcos);
+      setProb(isFinite(p) ? p : 0);
+      setRisk((j.risk || "").trim());
+      if (j.counseling) addBubble(j.counseling, "bot");
+
+      if (j.next_questions && j.next_questions.length > 0) {
+        const q = j.next_questions[0];
+        setLastQuestion(q);
+        const qText = q.text || q.question_text || "Next question:";
+        addBubble(qText, "bot");
+        setQaVisible(true);
+        setHint("Keep answering to refine advice.");
+      } else {
+        setLastQuestion(null);
+        setQaVisible(false);
+        setHint("Follow-ups complete.");
+      }
+    } catch (e) {
+      addBubble("Sorry—couldn't process that. Try again.", "bot");
+    } finally {
+      setLoading(false);
+    }
   }
 
-  return (
-    <>
-      <div className="card">
-        <h3 className="section-title">Enter details</h3>
+  /** UI helpers */
+  const riskClass = risk ? `risk ${risk}` : "risk";
 
-        {/* Core inputs */}
-        <div className="row">
-          {core.map((f) => (
-            <div key={f}>
-              <label className="label">{f}</label>
-              <input className="input" value={values[f] ?? ""} onChange={(e)=>setVal(f, e.target.value)}
-                     placeholder='e.g. 28 or "Y"/"N" or "R"/"I"' />
-            </div>
-          ))}
-        </div>
+  const loadSample = () => {
+    setAge(33);
+    setBmi(25.27);
+    setCycle("I");
+    setCycleLen(40);
+    setAmh(6.63);
+    setLh(6.3);
+    setFsh(5.54);
+    setFolL(13);
+    setFolR(15);
+    setPreg("N");
+  };
 
-        {/* More inputs */}
-        <div style={{ display:"flex", alignItems:"center", gap:10, marginTop: 10 }}>
-          <div style={{ fontWeight: 700 }}>More inputs</div>
-          <input className="input" style={{ maxWidth: 280 }} placeholder="Search…" value={filter} onChange={(e)=>setFilter(e.target.value)} />
-        </div>
-        <div className="row" style={{ marginTop: 8 }}>
-          {more.map((f) => (
-            <div key={f}>
-              <label className="label">{f}</label>
-              <input className="input" value={values[f] ?? ""} onChange={(e)=>setVal(f, e.target.value)} placeholder="value" />
-            </div>
-          ))}
-        </div>
-
-        <div style={{ display:"flex", gap:10, marginTop: 14 }}>
-          <button className="btn" onClick={() => getResult(true)} disabled={thinking}>
-            {thinking ? (<><span className="spinner" />&nbsp;Getting result…</>) : "Get Result"}
-          </button>
-          <button className="btn secondary" onClick={() => { setValues(template); setResult(null); setAnswers([]); }} disabled={thinking}>
-            Reset
-          </button>
-        </div>
-      </div>
-
-      {result && (
-        <div className="grid" style={{ marginTop: 16 }}>
-          <div className="card">
-            <h3 className="section-title">Counseling</h3>
-            <p style={{ whiteSpace: "pre-wrap", lineHeight: 1.6 }}>
-              {result.counseling || "(LLM unavailable at the moment.)"}
-            </p>
-          </div>
-          <div className="card">
-            <h3 className="section-title">Summary</h3>
-            <div className="kv" style={{ marginBottom: 6 }}>
-              <Pill risk={result.risk} />
-              <span style={{ color:"var(--muted)" }}>Probability: {(result.prob_pcos * 100).toFixed(1)}%</span>
-            </div>
-            <Gauge prob={result.prob_pcos} />
-          </div>
-
-          <div className="card" style={{ gridColumn: "1 / -1" }}>
-            <h3 className="section-title">Evidence used</h3>
-            <ul style={{ paddingLeft: 18, margin: 0 }}>
-              {(result.evidence_used || []).map((it, i) => (
-                <li key={i} style={{ marginBottom: 6 }}>
-                  {it.suggestion ? it.suggestion : JSON.stringify(it)}
-                  {it.source ? <span style={{ color:"var(--muted)" }}> ({it.source})</span> : null}
-                </li>
-              ))}
-              {(!result.evidence_used || !result.evidence_used.length) && (
-                <li style={{ color:"var(--muted)" }}>No evidence items returned.</li>
-              )}
-            </ul>
-          </div>
-
-          {/* Follow-up modal */}
-          {result?.next_questions?.length ? (
-            <div className="modal-backdrop">
-              <div className="modal">
-                <div className="brand-sub">Follow-up question</div>
-                <h3 style={{ marginTop: 6 }}>{result.next_questions[0].question_text}</h3>
-                <div style={{ display:"flex", gap:10, marginTop: 12, alignItems:"center" }}>
-                  <button className="btn" onClick={() => answerFollowup("yes")} disabled={thinking}>
-                    {thinking ? (<><span className="spinner" />&nbsp;Thinking…</>) : "Yes"}
-                  </button>
-                  <button className="btn secondary" onClick={() => answerFollowup("no")} disabled={thinking}>
-                    {thinking ? "…" : "No"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      )}
-    </>
-  );
-}
-
-/* ---------- Root App with Tabs ---------- */
-export default function App() {
-  const [tab, setTab] = useState("chat"); // "chat" | "details"
+  /** Debug numbers */
+  const probRaw = prob == null ? "—" : prob.toFixed(4);
+  const probPct = prob == null ? "—" : `${(prob * 100).toFixed(1)}%`;
+  const localBand = prob == null ? "—" : localRiskBand(prob);
 
   return (
-    <div className="container">
-      {/* Header */}
-      <div className="header">
-        <div className="brand">
-          <div className="logo"><MedicalLogo /></div>
-          <div>
-            <div className="brand-title">PCOS Assistant</div>
-            <div className="brand-sub">Your AI-powered personal assistant</div>
-          </div>
+    <div className="wrap">
+      <header>
+        <div className="logo"><span>🩺</span></div>
+        <div>
+          <h1>PCOS Assistant</h1>
+          <div className="sub"><em>Your AI-powered personal assistant</em> — risk, follow-up, counseling</div>
         </div>
-        <div className="tabs">
-          <button className={`tab ${tab === "chat" ? "active" : ""}`} onClick={() => setTab("chat")}>Chat</button>
-          <button className={`tab ${tab === "details" ? "active" : ""}`} onClick={() => setTab("details")}>Enter details</button>
+      </header>
+
+      <div className="grid">
+        {/* LEFT: DATA ENTRY */}
+        <div className="card">
+          <h3>Enter Patient Details</h3>
+          <div className="row">
+            <span className="pill">Minimum fields work — more improves accuracy</span>
+          </div>
+
+          <label>Age (yrs)</label>
+          <input value={age} onChange={(e)=>setAge(e.target.value)} type="number" min="10" max="60" placeholder="e.g., 33"/>
+
+          <label>BMI</label>
+          <input value={bmi} onChange={(e)=>setBmi(e.target.value)} type="number" step="0.01" placeholder="e.g., 25.3"/>
+
+          <label>Cycle (R/I)</label>
+          <select value={cycle} onChange={(e)=>setCycle(e.target.value)}>
+            <option value="">Select</option>
+            <option value="R">Regular</option>
+            <option value="I">Irregular</option>
+          </select>
+
+          <label>Cycle length (days)</label>
+          <input value={cycleLen} onChange={(e)=>setCycleLen(e.target.value)} type="number" min="10" max="120" placeholder="e.g., 40"/>
+
+          <label>AMH (ng/mL)</label>
+          <input value={amh} onChange={(e)=>setAmh(e.target.value)} type="number" step="0.01" placeholder="e.g., 6.6"/>
+
+          <label>LH (mIU/mL)</label>
+          <input value={lh} onChange={(e)=>setLh(e.target.value)} type="number" step="0.01" placeholder="optional"/>
+
+          <label>FSH (mIU/mL)</label>
+          <input value={fsh} onChange={(e)=>setFsh(e.target.value)} type="number" step="0.01" placeholder="optional"/>
+
+          <label>Follicle No. (L)</label>
+          <input value={folL} onChange={(e)=>setFolL(e.target.value)} type="number" step="1" placeholder="optional"/>
+
+          <label>Follicle No. (R)</label>
+          <input value={folR} onChange={(e)=>setFolR(e.target.value)} type="number" step="1" placeholder="optional"/>
+
+          <label>Pregnant (Y/N)</label>
+          <select value={preg} onChange={(e)=>setPreg(e.target.value)}>
+            <option value="">Select</option>
+            <option value="N">No</option>
+            <option value="Y">Yes</option>
+          </select>
+
+          <div className="row" style={{marginTop:12}}>
+            <button className="btn" onClick={startFlow} disabled={loading}>{loading ? "Working…" : "Get Result"}</button>
+            <button className="btn secondary" onClick={loadSample}>Load Sample</button>
+          </div>
+          <div className="muted" style={{marginTop:8}}>{hint}</div>
+        </div>
+
+        {/* RIGHT: RESULT & CHAT */}
+        <div className="card">
+          <h3>Result & Counseling</h3>
+          <div className="result">
+            <div>Probability:</div>
+            <div title={`raw=${probRaw}`}>{probPct}</div>
+            <div className="pill" title={`local=${localBand} · backend=${risk}`}>
+              Risk: <span className={riskClass} style={{marginLeft:6}}>{risk || "—"}</span>
+            </div>
+          </div>
+
+          <div className="chat">
+            {chat.map((m, i)=>(
+              <div key={i} className={`bubble ${m.who==="user" ? "user": ""}`}>{m.text}</div>
+            ))}
+          </div>
+
+          {qaVisible && (
+            <div className="qa">
+              <button className="btn" onClick={()=>sendAnswer("yes")} disabled={loading}>Yes</button>
+              <button className="btn secondary" onClick={()=>sendAnswer("no")} disabled={loading}>No</button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Body */}
-      {tab === "chat" ? (
-        <div className="grid">
-          <ChatPane />
-          <div className="card">
-            <h3 className="section-title">About</h3>
-            <p style={{ color: "var(--muted)" }}>
-              Built for clinicians, interns, and patients to explore PCOS-related questions.
-              The assistant can incorporate lab parameters (e.g., hCG, AMH, LH/FSH) and
-              patient factors for risk analysis and tailored guidance.
-            </p>
-            <p style={{ color: "var(--muted)" }}>
-              Use the <strong>Enter details</strong> tab to provide parameters and generate a result.
-            </p>
-          </div>
+      {/* DEBUG PANEL */}
+      <div className="card" style={{marginTop:16}}>
+        <div className="row" style={{justifyContent:"space-between"}}>
+          <h3 style={{margin:0}}>Debug</h3>
+          <label style={{display:"flex",alignItems:"center",gap:8}}>
+            <input type="checkbox" checked={showDebug} onChange={(e)=>setShowDebug(e.target.checked)} />
+            <span className="muted">show raw backend payload</span>
+          </label>
         </div>
-      ) : (
-        <DetailsPane />
-      )}
-
-      <div className="brand-sub" style={{ textAlign: "center", marginTop: 18 }}>
-        © {new Date().getFullYear()} Shubhi Sharma · MIT · Data credits in README.
+        <div className="muted" style={{marginTop:6}}>
+          API_BASE: {API_BASE} · Last endpoint: {lastEndpoint || "—"}
+        </div>
+        {showDebug && (
+          <pre style={{
+            background:"#0e1627",border:"1px solid #24324d",borderRadius:10,padding:12,overflow:"auto",maxHeight:280,marginTop:10
+          }}>{lastResponse ? JSON.stringify(lastResponse, null, 2) : "// run Get Result to see payload here"}</pre>
+        )}
+        <div className="muted" style={{marginTop:6}}>
+          Raw prob: <b>{probRaw}</b> · Local band: <b>{localBand}</b> · Backend band: <b>{risk || "—"}</b>
+        </div>
       </div>
+
+      <p className="muted" style={{marginTop:14}}>
+        Backend: {API_BASE} · Make sure Flask is running.
+      </p>
     </div>
   );
 }
