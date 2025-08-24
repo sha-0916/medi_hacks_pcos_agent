@@ -32,11 +32,12 @@ export default function App() {
   // assistant state
   const [prob, setProb] = useState(null);      // numeric 0..1
   const [risk, setRisk] = useState("");        // backend risk string
-  const [chat, setChat] = useState([]);        // [{who:"bot"|"user", text:string}]
+  const [chat, setChat] = useState([]);        // [{who:"bot"|"user", text:string, id?:string}]
   const [qaVisible, setQaVisible] = useState(false);
   const [lastQuestion, setLastQuestion] = useState(null);
   const [answered, setAnswered] = useState([]);
   const [hint, setHint] = useState("");
+  const [err, setErr] = useState("");
 
   // debug state
   const [lastEndpoint, setLastEndpoint] = useState("");
@@ -54,8 +55,11 @@ export default function App() {
   }, []);
 
   /** UI helpers */
-  const addBubble = (text, who = "bot") =>
-    setChat((c) => [...c, { who, text }]);
+  const addBubble = (text, who = "bot", id = undefined) =>
+    setChat((c) => [...c, { who, text, id }]);
+
+  const removeBubbleById = (id) =>
+    setChat((c) => c.filter((b) => b.id !== id));
 
   const resetConversation = () => {
     setChat([]);
@@ -63,6 +67,7 @@ export default function App() {
     setLastQuestion(null);
     setAnswered([]);
     setHint("");
+    setErr("");
     setProb(null);
     setRisk("");
     setLastResponse(null);
@@ -104,6 +109,7 @@ export default function App() {
       });
       const j = await r.json();
       setLastResponse(j);
+      setErr("");
 
       const p = typeof j.prob_pcos === "number" ? j.prob_pcos : Number(j.prob_pcos);
       setProb(isFinite(p) ? p : 0);
@@ -126,6 +132,7 @@ export default function App() {
         setQaVisible(false);
       }
     } catch (e) {
+      setErr("Could not contact backend. Check API_BASE and server logs.");
       addBubble("Sorry—something went wrong. Please try again.", "bot");
     } finally {
       setLoading(false);
@@ -137,7 +144,14 @@ export default function App() {
    * ------------------------------------------*/
   async function sendAnswer(ans) {
     if (!lastQuestion) return;
+
+    // show user’s answer
     addBubble(ans, "user");
+
+    // add a temporary “thinking…” bubble we can remove later
+    const thinkingId = "thinking-" + Math.random().toString(36).slice(2);
+    addBubble("Fetching Possibilities... ", "bot", thinkingId);
+
     const newAnswered = [...answered, { question_id: lastQuestion.question_id, answer: ans }];
     setAnswered(newAnswered);
 
@@ -151,13 +165,21 @@ export default function App() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+
+      // remove “thinking…” bubble now that we have a response
+      removeBubbleById(thinkingId);
+
       const j = await r.json();
       setLastResponse(j);
+      setErr("");
 
       const p = typeof j.prob_pcos === "number" ? j.prob_pcos : Number(j.prob_pcos);
       setProb(isFinite(p) ? p : 0);
       setRisk((j.risk || "").trim());
-      if (j.counseling) addBubble(j.counseling, "bot");
+
+      if (j.counseling) {
+        addBubble(j.counseling, "bot");
+      }
 
       if (j.next_questions && j.next_questions.length > 0) {
         const q = j.next_questions[0];
@@ -172,6 +194,9 @@ export default function App() {
         setHint("Follow-ups complete.");
       }
     } catch (e) {
+      // remove “thinking…” bubble if fetch threw
+      removeBubbleById(thinkingId);
+      setErr("Answer submit failed. See console/Debug for details.");
       addBubble("Sorry—couldn't process that. Try again.", "bot");
     } finally {
       setLoading(false);
@@ -260,6 +285,7 @@ export default function App() {
             <button className="btn secondary" onClick={loadSample}>Load Sample</button>
           </div>
           <div className="muted" style={{marginTop:8}}>{hint}</div>
+          {err && <div className="bubble" style={{borderColor:"#6b1f1f", background:"#251319"}}>{err}</div>}
         </div>
 
         {/* RIGHT: RESULT & CHAT */}
@@ -273,9 +299,9 @@ export default function App() {
             </div>
           </div>
 
-          <div className="chat">
+          <div className="chat" id="chat">
             {chat.map((m, i)=>(
-              <div key={i} className={`bubble ${m.who==="user" ? "user": ""}`}>{m.text}</div>
+              <div key={m.id || i} className={`bubble ${m.who==="user" ? "user": ""}`}>{m.text}</div>
             ))}
           </div>
 
@@ -313,6 +339,11 @@ export default function App() {
       <p className="muted" style={{marginTop:14}}>
         Backend: {API_BASE} · Make sure Flask is running.
       </p>
+
+      <footer className="footer">
+        © 2025 Shubhi Sharma. All rights reserved.
+      </footer>
+
     </div>
   );
 }

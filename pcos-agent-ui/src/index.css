@@ -1,26 +1,181 @@
-/* src/index.css */
-:root{--bg:#0b1220;--card:#141b2d;--fg:#e6edf3;--muted:#9aa4b2;--line:#20304d;--acc:#3b82f6}
-*{box-sizing:border-box}
-html,body,#root{height:100%}
-html,body{margin:0;background:var(--bg);color:var(--fg);font-family:ui-sans-serif,system-ui,Segoe UI,Roboto,Arial}
-.wrap{max-width:1100px;margin:32px auto;padding:0 16px}
-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
-.logo{width:40px;height:40px;border-radius:10px;background:#0f1730;display:grid;place-items:center;border:1px solid var(--line)}
-h1{margin:0;font-size:26px}
-.sub{color:var(--muted);margin:4px 0 18px}
-.grid{display:grid;gap:16px;grid-template-columns:1fr 1fr}
-.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px}
-label{display:block;font-size:13px;color:var(--muted);margin:10px 0 6px}
-input,select{width:100%;background:#0e1627;color:var(--fg);border:1px solid var(--line);border-radius:10px;padding:10px;font-size:14px}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.btn{background:var(--acc);border:0;color:white;border-radius:10px;padding:10px 14px;cursor:pointer}
-.btn.secondary{background:#22314e}
-.pill{padding:6px 10px;border:1px solid var(--line);border-radius:999px;color:var(--muted);font-size:12px}
-.result{display:flex;gap:8px;align-items:center;margin:8px 0 0}
-.risk.low{color:#22c55e}.risk.medium{color:#eab308}.risk.high{color:#ef4444}
-.chat{margin-top:12px;border-top:1px dashed var(--line);padding-top:12px;min-height:120px}
-.bubble{background:#0e1627;border:1px solid var(--line);border-radius:12px;padding:12px;margin:8px 0;white-space:pre-wrap}
-.bubble.user{background:#10223d;border-color:#1f3c6d}
-.qa{display:flex;gap:10px;margin:8px 0}
-.muted{color:var(--muted);font-size:12px}
-@media (max-width:980px){.grid{grid-template-columns:1fr}}
+/* ===== PCOS Assistant – Dark Medical Theme ===== */
+
+:root {
+  --bg: #0a0f1c;
+  --bg2: #0d1528;
+  --card: rgba(20, 27, 45, 0.85);
+  --card-border: #1f3c36;   /* greenish border */
+  --fg: #e6edf3;
+  --muted: #9aa4b2;
+  --line: #22403a;
+  --acc: #22c55e;          /* medical green */
+  --acc-2: #3b82f6;        /* blue for secondary accents */
+  --ok: #22c55e;
+  --warning: #eab308;
+  --danger: #ef4444;
+}
+
+/* Reset + base */
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  color: var(--fg);
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--bg);
+}
+
+/* wrapper */
+.wrap {
+  max-width: 1100px;
+  margin: 32px auto;
+  padding: 0 16px 64px;
+}
+
+/* ===== Header ===== */
+header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  position: relative;
+}
+h1 {
+  margin: 0;
+  font-size: 28px;
+}
+.sub {
+  color: var(--muted);
+  font-style: italic;
+  margin-top: 2px;
+}
+
+/* accent underline */
+header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: -8px;
+  width: 280px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--acc), var(--acc-2));
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.6);
+}
+
+/* ===== Layout grid (Patient left, Result right) ===== */
+.grid {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr; /* left column slightly wider */
+  gap: 20px;
+}
+@media (max-width: 980px) {
+  .grid { grid-template-columns: 1fr; } /* stack on smaller screens */
+}
+
+/* ===== Cards ===== */
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: 16px;
+  padding: 16px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  box-shadow: 0 0 15px rgba(34, 197, 94, 0.12);
+}
+
+/* Labels & inputs */
+label {
+  display: block;
+  font-size: 13px;
+  color: var(--muted);
+  margin: 10px 0 6px;
+}
+input, select {
+  width: 100%;
+  background: rgba(14, 22, 39, 0.9);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  font-size: 14px;
+  outline: none;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+input:focus, select:focus {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2);
+}
+
+/* Buttons */
+.btn {
+  background: linear-gradient(180deg, var(--acc), #1a9447);
+  border: 0;
+  color: white;
+  border-radius: 10px;
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: transform .05s ease, filter .15s ease;
+  box-shadow: 0 6px 18px rgba(34, 197, 94, 0.25);
+}
+.btn:hover { filter: brightness(1.05); }
+.btn:active { transform: translateY(1px); }
+.btn.secondary {
+  background: linear-gradient(180deg, #1e2b47, #18243d);
+  color: #d5deea;
+}
+
+/* Pills */
+.pill {
+  padding: 6px 10px;
+  border: 1px solid var(--acc);
+  border-radius: 999px;
+  color: var(--acc);
+  font-size: 12px;
+  background: rgba(34, 197, 94, 0.15);
+}
+
+/* Result summary */
+.result { display: flex; gap: 8px; align-items: center; margin: 8px 0; }
+.risk.low    { color: var(--ok); }
+.risk.medium { color: var(--warning); }
+.risk.high   { color: var(--danger); }
+
+/* Chat */
+.chat {
+  margin-top: 12px;
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+}
+.bubble {
+  background: rgba(14, 22, 39, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 8px 0;
+  white-space: pre-wrap;
+}
+.bubble.user {
+  background: rgba(20, 40, 32, 0.9);
+  border-color: var(--acc);
+}
+
+/* Debug panel */
+pre {
+  background: rgba(14, 22, 39, 0.88);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  overflow: auto;
+  font-size: 12px;
+}
+
+/* ===== Footer ===== */
+.footer {
+  margin-top: 40px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  opacity: 0.8;
+}
